@@ -1,0 +1,61 @@
+{
+  "name": "gpt-image2-desktop-app",
+  "version": "0.1.0",
+  "description": "跨平台 GPT Image 2 图片生成桌面应用",
+  "main": "dist/main/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "tsc -p tsconfig.json && vite build && electron-builder",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pack": "tsc -p tsconfig.json && vite build && electron-builder --dir"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "gpt-image2",
+    "image-generation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "concurrently": "latest",
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "com.claybe.gptimage2desktop",
+    "productName": "GPT Image 2 Studio",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    }
+  }
+}
