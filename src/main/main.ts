@@ -50,27 +50,35 @@ function pickImageDataUrl(responseBody: unknown): string | null {
 }
 
 ipcMain.handle('image:generate', async (_event, request: GenerateImageRequest): Promise<GenerateImageResult> => {
-  const endpoint = `${request.settings.apiBaseUrl.replace(/\/$/, '')}/images/edits`;
-  const form = new FormData();
+  const hasReferenceImages = request.referenceImages.length > 0;
+  const endpoint = `${request.settings.apiBaseUrl.replace(/\/$/, '')}${hasReferenceImages ? '/images/edits' : '/images/generations'}`;
+  const body = hasReferenceImages ? new FormData() : {
+    model: request.settings.model,
+    prompt: request.prompt,
+    size: request.size
+  };
 
-  form.set('model', request.settings.model);
-  form.set('prompt', request.prompt);
-  form.set('size', request.size);
+  if (body instanceof FormData) {
+    body.set('model', request.settings.model);
+    body.set('prompt', request.prompt);
+    body.set('size', request.size);
 
-  request.referenceImages.forEach((image, index) => {
-    form.append('image', dataUrlToBlob(image), image.name || `reference-${index + 1}.png`);
-  });
+    request.referenceImages.forEach((image, index) => {
+      body.append('image', dataUrlToBlob(image), image.name || `reference-${index + 1}.png`);
+    });
 
-  if (request.maskImage) {
-    form.set('mask', dataUrlToBlob(request.maskImage), request.maskImage.name || 'mask.png');
+    if (request.maskImage) {
+      body.set('mask', dataUrlToBlob(request.maskImage), request.maskImage.name || 'mask.png');
+    }
   }
 
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${request.settings.apiKey}`
+      Authorization: `Bearer ${request.settings.apiKey}`,
+      ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
     },
-    body: form
+    body: body instanceof FormData ? body : JSON.stringify(body)
   });
 
   const responseBody = await response.json().catch(() => ({}));

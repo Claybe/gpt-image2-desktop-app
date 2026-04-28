@@ -43,9 +43,9 @@ function App() {
 
   const selectedReference = referenceImages[selectedReferenceIndex];
 
-  const canGenerate = useMemo(() => {
-    return Boolean(settings.apiKey.trim() && prompt.trim() && referenceImages.length > 0 && !isGenerating);
-  }, [settings.apiKey, prompt, referenceImages.length, isGenerating]);
+  const canSubmit = useMemo(() => {
+    return !isGenerating;
+  }, [isGenerating]);
 
   useEffect(() => {
     localStorage.setItem('gpt-image2-settings', JSON.stringify({ ...settings, apiKey: '' }));
@@ -122,8 +122,13 @@ function App() {
   }
 
   async function generateImage() {
-    if (!canGenerate) {
-      setStatus('请填写 API Key、提示词，并至少添加一张参考图');
+    if (!settings.apiKey.trim()) {
+      setStatus('请填写 API Key');
+      return;
+    }
+
+    if (!prompt.trim()) {
+      setStatus('请填写提示词');
       return;
     }
 
@@ -192,7 +197,7 @@ function App() {
           <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." />
         </label>
 
-        <button className="primary" disabled={!canGenerate} onClick={generateImage}>{isGenerating ? '生成中...' : '生成图片'}</button>
+        <button className="primary" disabled={!canSubmit} onClick={generateImage}>{isGenerating ? '生成中...' : '生成图片'}</button>
         <p className="status">{status}</p>
       </section>
 
