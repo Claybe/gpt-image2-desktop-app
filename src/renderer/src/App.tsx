@@ -1,6 +1,6 @@
 import { ChangeEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AppSettings, GenerateImageRequest, ImageAsset, ImageSize } from '../../shared.js';
+import type { AppSettings, GenerateImageRequest, ImageAsset, ImageSize, MaskMode } from '../../shared.js';
 import './styles.css';
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -21,6 +21,8 @@ interface QueueItem {
   size: ImageSize;
   referenceImages: ImageAsset[];
   maskImage?: ImageAsset;
+  maskMode?: MaskMode;
+  parentTaskId?: string;
   status: QueueStatus;
   createdAt: string;
   error?: string;
@@ -54,9 +56,55 @@ function formatDuration(seconds: number) {
   return minutes > 0 ? `${minutes}分${restSeconds}秒` : `${restSeconds}秒`;
 }
 
+async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('遮罩图片加载失败'));
+    image.src = dataUrl;
+  });
+}
+
+async function createMaskAsset(dataUrl: string, mode: MaskMode): Promise<ImageAsset> {
+  const image = await loadImage(dataUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    throw new Error('无法处理遮罩图片');
+  }
+
+  context.drawImage(image, 0, 0);
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+
+  for (let index = 0; index < pixels.data.length; index += 4) {
+    const alpha = pixels.data[index + 3];
+    const gray = Math.round(((pixels.data[index] + pixels.data[index + 1] + pixels.data[index + 2]) / 3) * (alpha / 255));
+
+    if (mode === 'alpha') {
+      pixels.data[index] = 255;
+      pixels.data[index + 1] = 255;
+      pixels.data[index + 2] = 255;
+      pixels.data[index + 3] = 255 - alpha;
+    } else {
+      const value = mode === 'invert-gray' ? 255 - gray : gray;
+      pixels.data[index] = value;
+      pixels.data[index + 1] = value;
+      pixels.data[index + 2] = value;
+      pixels.data[index + 3] = 255;
+    }
+  }
+
+  context.putImageData(pixels, 0, 0);
+  return { name: `mask-${mode}.png`, mimeType: 'image/png', dataUrl: canvas.toDataURL('image/png') };
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const queueListRef = useRef<HTMLDivElement | null>(null);
   const queueRef = useRef<QueueItem[]>([]);
   const timersRef = useRef<Record<string, number>>({});
   const startTimesRef = useRef<Record<string, number>>({});
@@ -71,6 +119,8 @@ function App() {
   const [selectedReferenceIndex, setSelectedReferenceIndex] = useState(0);
   const [brushSize, setBrushSize] = useState(36);
   const [brushMode, setBrushMode] = useState<BrushMode>('draw');
+  const [maskMode, setMaskMode] = useState<MaskMode>('alpha');
+  const [contextSourceTaskId, setContextSourceTaskId] = useState<string>();
   const [isDrawing, setIsDrawing] = useState(false);
   const [maskDataUrl, setMaskDataUrl] = useState<string>();
   const [resultImage, setResultImage] = useState<string>();
@@ -92,6 +142,9 @@ function App() {
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string>();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
+  const [isQueueSelecting, setIsQueueSelecting] = useState(false);
+  const [selectedQueueIds, setSelectedQueueIds] = useState<string[]>([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   queueRef.current = queue;
   selectedQueueItemIdRef.current = selectedQueueItemId;
@@ -99,6 +152,30 @@ function App() {
   const selectedReference = referenceImages[selectedReferenceIndex];
   const selectedQueueItem = queue.find((item) => item.id === selectedQueueItemId);
   const runningCount = queue.filter((item) => item.status === 'running').length;
+  const contextResultItems = useMemo(() => {
+    if (!selectedQueueItem) {
+      return [];
+    }
+
+    const byId = new Map(queue.map((item) => [item.id, item]));
+    const ancestors: QueueItem[] = [];
+    let current = selectedQueueItem.parentTaskId ? byId.get(selectedQueueItem.parentTaskId) : undefined;
+
+    while (current) {
+      ancestors.unshift(current);
+      current = current.parentTaskId ? byId.get(current.parentTaskId) : undefined;
+    }
+
+    const descendants: QueueItem[] = [];
+    let child = queue.find((item) => item.parentTaskId === selectedQueueItem.id);
+    while (child) {
+      descendants.push(child);
+      child = queue.find((item) => item.parentTaskId === child?.id);
+    }
+
+    return [...ancestors, selectedQueueItem, ...descendants].filter((item) => item.resultImage);
+  }, [queue, selectedQueueItem]);
+  const selectedContextResultIndex = selectedQueueItemId ? contextResultItems.findIndex((item) => item.id === selectedQueueItemId) : -1;
 
   const canSubmit = useMemo(() => true, []);
 
@@ -121,6 +198,14 @@ function App() {
       Object.values(timersRef.current).forEach((timer) => window.clearInterval(timer));
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedQueueItemId) {
+      return;
+    }
+
+    queueListRef.current?.querySelector(`[data-queue-id="${selectedQueueItemId}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [selectedQueueItemId]);
 
   useEffect(() => {
     if (!selectedReference || !canvasRef.current) {
@@ -168,13 +253,15 @@ function App() {
     return undefined;
   }
 
-  function snapshotQueueItem(): QueueItem {
+  async function snapshotQueueItem(): Promise<QueueItem> {
     return {
       id: crypto.randomUUID(),
       prompt,
       size,
       referenceImages: [...referenceImages],
-      maskImage: maskDataUrl ? { name: 'mask.png', mimeType: 'image/png', dataUrl: maskDataUrl } : undefined,
+      maskImage: maskDataUrl ? await createMaskAsset(maskDataUrl, maskMode) : undefined,
+      maskMode,
+      parentTaskId: contextSourceTaskId,
       status: 'running',
       createdAt: formatClock(),
       elapsedSeconds: 0
@@ -191,7 +278,8 @@ function App() {
       prompt: item.prompt,
       size: item.size,
       referenceImages: item.referenceImages,
-      maskImage: item.maskImage
+      maskImage: item.maskImage,
+      maskMode: item.maskMode
     };
     return window.desktopApi.generateImage(request);
   }
@@ -297,9 +385,44 @@ function App() {
     startTimesRef.current = {};
     setQueue(() => []);
     setSelectedQueueItemId(undefined);
+    setSelectedQueueIds([]);
+    setIsQueueSelecting(false);
     setResultImage(undefined);
     setPreviewImage(undefined);
     localStorage.removeItem(QUEUE_STORAGE_KEY);
+  }
+
+  function toggleQueueSelection(itemId: string) {
+    setSelectedQueueIds((current) => current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]);
+  }
+
+  function deleteSelectedQueueItems() {
+    const ids = new Set(selectedQueueIds);
+    selectedQueueIds.forEach((id) => {
+      if (timersRef.current[id]) {
+        window.clearInterval(timersRef.current[id]);
+        delete timersRef.current[id];
+      }
+      delete startTimesRef.current[id];
+    });
+
+    setQueue((current) => current.filter((item) => !ids.has(item.id)));
+    setSelectedQueueIds([]);
+    setIsQueueSelecting(false);
+    if (selectedQueueItemId && ids.has(selectedQueueItemId)) {
+      setSelectedQueueItemId(undefined);
+      setResultImage(undefined);
+      setPreviewImage(undefined);
+    }
+  }
+
+  function selectAllQueueItems() {
+    setSelectedQueueIds(queue.map((item) => item.id));
+  }
+
+  function cancelQueueSelection() {
+    setIsQueueSelecting(false);
+    setSelectedQueueIds([]);
   }
 
   async function generateImage() {
@@ -310,10 +433,20 @@ function App() {
       return;
     }
 
-    const item = snapshotQueueItem();
+    let item: QueueItem;
+    try {
+      item = await snapshotQueueItem();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '遮罩图片处理失败';
+      setStatus(message);
+      addLog('error', message);
+      return;
+    }
+
     setQueue((current) => [...current, item]);
     setSelectedQueueItemId(item.id);
     setResultImage(undefined);
+    setContextSourceTaskId(undefined);
     setStatus('已创建任务，开始生成');
     void executeQueueItem(item);
   }
@@ -323,6 +456,7 @@ function App() {
     setReferenceImages(item.referenceImages);
     setSelectedReferenceIndex(0);
     setMaskDataUrl(item.maskImage?.dataUrl);
+    setMaskMode(item.maskMode ?? 'alpha');
     setResultImage(item.resultImage);
 
     if (item.error) {
@@ -330,6 +464,37 @@ function App() {
     } else {
       setStatus(`队列任务状态：${item.status}，用时 ${formatDuration(item.elapsedSeconds)}`);
     }
+  }
+
+  function handleQueueItemClick(item: QueueItem) {
+    if (isQueueSelecting) {
+      toggleQueueSelection(item.id);
+      return;
+    }
+
+    selectQueueItem(item);
+  }
+
+  function fillReferenceFromQueueItem(item: QueueItem) {
+    if (!item.resultImage) {
+      return;
+    }
+
+    const nextIndex = referenceImages.length;
+    setReferenceImages((current) => [...current, { name: 'queue-result.png', mimeType: 'image/png', dataUrl: item.resultImage! }]);
+    setSelectedReferenceIndex(nextIndex);
+    setMaskDataUrl(undefined);
+    setStatus('已将任务结果填入参考图');
+  }
+
+  function selectAdjacentResult(direction: -1 | 1) {
+    if (contextResultItems.length < 2) {
+      return;
+    }
+
+    const currentIndex = selectedContextResultIndex >= 0 ? selectedContextResultIndex : 0;
+    const nextIndex = (currentIndex + direction + contextResultItems.length) % contextResultItems.length;
+    selectQueueItem(contextResultItems[nextIndex]);
   }
 
   async function saveResult() {
@@ -355,9 +520,12 @@ function App() {
         <h1>GPT Image 2 Studio</h1>
         <p className="subtitle">跨 macOS / Windows 的参考图编辑与生成工具</p>
 
-        <label>API Base URL<input value={settings.apiBaseUrl} onChange={(event) => setSettings({ ...settings, apiBaseUrl: event.target.value })} /></label>
-        <label>API Key<input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} placeholder="sk-..." /></label>
-        <label>Model<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
+        <details className="settings-details" open={isSettingsOpen} onToggle={(event) => setIsSettingsOpen(event.currentTarget.open)}>
+          <summary>API 与模型设置</summary>
+          <label>API Base URL<input value={settings.apiBaseUrl} onChange={(event) => setSettings({ ...settings, apiBaseUrl: event.target.value })} /></label>
+          <label>API Key<input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} placeholder="sk-..." /></label>
+          <label>Model<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
+        </details>
         <label>图片尺寸<select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>{IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>生成提示词<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." /></label>
         <div className="timer-card">并发任务 <strong>{runningCount}</strong></div>
@@ -383,9 +551,12 @@ function App() {
           </div>
 
           <div className="panel queue-panel">
-            <div className="panel-title"><h2>队列</h2><button onClick={clearQueue} disabled={queue.length === 0 || runningCount > 0}>清空</button></div>
-            <div className="queue-list">
-              {queue.map((item) => <button className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}`} key={item.id} onClick={() => selectQueueItem(item)}><strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p><small>用时 {formatDuration(item.elapsedSeconds)}</small>{item.error && <em>{item.error}</em>}</button>)}
+            <div className="panel-title">
+              <h2>队列</h2>
+              {isQueueSelecting ? <div className="queue-actions"><button onClick={selectAllQueueItems} disabled={queue.length === 0}>全选</button><button onClick={deleteSelectedQueueItems} disabled={selectedQueueIds.length === 0}>删除选中</button><button onClick={cancelQueueSelection}>取消</button></div> : <button onClick={() => setIsQueueSelecting(true)} disabled={queue.length === 0}>清理</button>}
+            </div>
+            <div className="queue-list" ref={queueListRef}>
+              {queue.map((item) => <div data-queue-id={item.id} className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}${selectedQueueIds.includes(item.id) ? ' selected' : ''}`} key={item.id} onClick={() => handleQueueItemClick(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleQueueItemClick(item); }} role="button" tabIndex={0}>{isQueueSelecting && <span className="queue-check">{selectedQueueIds.includes(item.id) ? '已选' : '选择'}</span>}<img className="queue-thumb" src={item.resultImage ?? item.referenceImages[0]?.dataUrl ?? item.maskImage?.dataUrl} alt="任务缩略图" />{!item.resultImage && !item.referenceImages[0] && !item.maskImage && <div className="queue-thumb queue-thumb-empty">无图</div>}<strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p><small>用时 {formatDuration(item.elapsedSeconds)}</small>{item.error && <em>{item.error}</em>}{item.status === 'done' && item.resultImage && !isQueueSelecting && <button className="context-action-button" type="button" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>填入参考图</button>}</div>)}
               {queue.length === 0 && <div className="compact-empty">暂无队列任务</div>}
             </div>
           </div>
@@ -399,6 +570,7 @@ function App() {
                 <button className={brushMode === 'draw' ? 'active-tool' : ''} onClick={() => setBrushMode('draw')}>绘制</button>
                 <button className={brushMode === 'erase' ? 'active-tool' : ''} onClick={() => setBrushMode('erase')}>擦除</button>
                 <label className="range-label">笔刷 {brushSize}px<input type="range" min="8" max="120" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label>
+                <label className="mask-mode-label">遮罩模式<select value={maskMode} onChange={(event) => setMaskMode(event.target.value as MaskMode)}><option value="alpha">透明区保护</option><option value="gray">灰度原样</option><option value="invert-gray">灰度反转</option></select></label>
                 <button onClick={clearMask}>清空</button>
               </div>
             </div>
@@ -410,8 +582,9 @@ function App() {
 
           <div className="side-stack">
             <div className="panel result-panel">
-              <div className="panel-title"><h2>生成结果</h2><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
+              <div className="panel-title result-title"><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(-1)}>←</button><h2>生成结果</h2><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(1)}>→</button><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
               {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · 用时 {formatDuration(selectedQueueItem.elapsedSeconds)} · {selectedQueueItem.prompt}</p>}
+              {selectedQueueItem && <p className="context-detail">上下文结果 {selectedContextResultIndex >= 0 ? selectedContextResultIndex + 1 : 0}/{contextResultItems.length} · 参考图 {selectedQueueItem.referenceImages.length} 张 · {selectedQueueItem.maskImage ? `含 mask · ${selectedQueueItem.maskMode ?? 'alpha'}` : '无 mask'}</p>}
               {resultImage ? <button className="result-preview-button" onClick={() => setPreviewImage(resultImage)}><img className="result-image" src={resultImage} alt="生成结果" /></button> : <div className="empty-state">生成后的图片会显示在这里</div>}
             </div>
             <div className="panel log-panel">
