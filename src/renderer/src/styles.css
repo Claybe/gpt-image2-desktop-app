@@ -428,6 +428,24 @@ textarea {
   flex: 1 1 42%;
 }
 
+.result-preview-button {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.result-preview-button:hover:not(:disabled) {
+  background: transparent;
+}
+
+.result-preview-button:focus-visible {
+  outline: 2px solid #818cf8;
+  outline-offset: 3px;
+}
+
 .result-image {
   width: 100%;
   flex: 1;
@@ -435,6 +453,28 @@ textarea {
   border-radius: 18px;
   object-fit: contain;
   background: rgba(2, 6, 23, 0.45);
+}
+
+.preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(2, 6, 23, 0.86);
+}
+
+.preview-backdrop:hover:not(:disabled) {
+  background: rgba(2, 6, 23, 0.9);
+}
+
+.preview-image {
+  max-width: 96vw;
+  max-height: 92vh;
+  border-radius: 20px;
+  object-fit: contain;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.5);
 }
 
 .log-list {
