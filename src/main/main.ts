@@ -15,7 +15,7 @@ function createWindow() {
     minHeight: 720,
     title: 'GPT Image 2 Studio',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false
     }

@@ -27,7 +27,7 @@ function App() {
   const imageRef = useRef<HTMLImageElement | null>(null);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gpt-image2-settings');
-    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved), apiKey: '' } : DEFAULT_SETTINGS;
+    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
   });
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState<ImageSize>('1024x1024');
@@ -48,7 +48,7 @@ function App() {
   }, [isGenerating]);
 
   useEffect(() => {
-    localStorage.setItem('gpt-image2-settings', JSON.stringify({ ...settings, apiKey: '' }));
+    localStorage.setItem('gpt-image2-settings', JSON.stringify(settings));
   }, [settings]);
 
   useEffect(() => {
