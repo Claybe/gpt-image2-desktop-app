@@ -12,6 +12,26 @@ const DEFAULT_SETTINGS: AppSettings = {
 const IMAGE_SIZES: ImageSize[] = ['1024x1024', '1024x1536', '1536x1024', 'auto'];
 
 type BrushMode = 'draw' | 'erase';
+type QueueStatus = 'pending' | 'running' | 'done' | 'failed';
+
+interface QueueItem {
+  id: string;
+  prompt: string;
+  size: ImageSize;
+  referenceImages: ImageAsset[];
+  maskImage?: ImageAsset;
+  status: QueueStatus;
+  createdAt: string;
+  error?: string;
+  resultImage?: string;
+}
+
+interface LogEntry {
+  id: string;
+  level: 'info' | 'error';
+  message: string;
+  timestamp: string;
+}
 
 function readFileAsAsset(file: File): Promise<ImageAsset> {
   return new Promise((resolve, reject) => {
@@ -22,9 +42,15 @@ function readFileAsAsset(file: File): Promise<ImageAsset> {
   });
 }
 
+function formatClock(date = new Date()) {
+  return date.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const queueRunnerRef = useRef(false);
+  const queueRef = useRef<QueueItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gpt-image2-settings');
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
@@ -40,12 +66,25 @@ function App() {
   const [resultImage, setResultImage] = useState<string>();
   const [status, setStatus] = useState('准备就绪');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [delaySeconds, setDelaySeconds] = useState(0);
+  const [countdown, setCountdown] = useState(0);
+  const [queue, setQueueState] = useState<QueueItem[]>([]);
+  const [selectedQueueItemId, setSelectedQueueItemId] = useState<string>();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
 
   const selectedReference = referenceImages[selectedReferenceIndex];
+  const selectedQueueItem = queue.find((item) => item.id === selectedQueueItemId);
+  const hasPendingQueue = queue.some((item) => item.status === 'pending');
 
   const canSubmit = useMemo(() => {
-    return !isGenerating;
-  }, [isGenerating]);
+    return true;
+  }, []);
+
+  function setQueue(updater: (current: QueueItem[]) => QueueItem[]) {
+    const next = updater(queueRef.current);
+    queueRef.current = next;
+    setQueueState(next);
+  }
 
   useEffect(() => {
     localStorage.setItem('gpt-image2-settings', JSON.stringify(settings));
@@ -73,6 +112,111 @@ function App() {
     imageRef.current = image;
   }, [selectedReference]);
 
+  function addLog(level: LogEntry['level'], message: string) {
+    setLogs((current) => [{ id: crypto.randomUUID(), level, message, timestamp: formatClock() }, ...current].slice(0, 80));
+  }
+
+  function validateInput() {
+    if (!settings.apiKey.trim()) {
+      return '请填写 API Key';
+    }
+
+    if (/[^\x20-\x7e]/.test(settings.apiKey.trim())) {
+      return 'API Key 只能包含英文/数字/ASCII 符号，请检查是否粘贴了中文、全角字符或多余说明文字';
+    }
+
+    if (!prompt.trim()) {
+      return '请填写提示词';
+    }
+
+    if (!window.desktopApi) {
+      return '桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面';
+    }
+
+    return undefined;
+  }
+
+  function snapshotQueueItem(): QueueItem {
+    return {
+      id: crypto.randomUUID(),
+      prompt,
+      size,
+      referenceImages: [...referenceImages],
+      maskImage: maskDataUrl ? { name: 'mask.png', mimeType: 'image/png', dataUrl: maskDataUrl } : undefined,
+      status: 'pending',
+      createdAt: formatClock()
+    };
+  }
+
+  async function waitForDelay() {
+    if (delaySeconds <= 0) {
+      return;
+    }
+
+    for (let remaining = delaySeconds; remaining > 0; remaining -= 1) {
+      setCountdown(remaining);
+      setStatus(`计时器等待中：${remaining} 秒`);
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    setCountdown(0);
+  }
+
+  async function runQueueItem(item: QueueItem) {
+    if (!window.desktopApi) {
+      throw new Error('桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面');
+    }
+
+    await waitForDelay();
+    const request: GenerateImageRequest = {
+      settings,
+      prompt: item.prompt,
+      size: item.size,
+      referenceImages: item.referenceImages,
+      maskImage: item.maskImage
+    };
+    return window.desktopApi.generateImage(request);
+  }
+
+  async function runQueue() {
+    if (queueRunnerRef.current) {
+      return;
+    }
+
+    queueRunnerRef.current = true;
+    setIsGenerating(true);
+
+    try {
+      while (true) {
+        const nextItem = queueRef.current.find((item) => item.status === 'pending');
+        if (!nextItem) {
+          break;
+        }
+
+        setSelectedQueueItemId(nextItem.id);
+        setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'running' } : item));
+        setStatus(`正在执行队列任务：${nextItem.prompt.slice(0, 24)}`);
+        addLog('info', `开始任务：${nextItem.prompt}`);
+
+        try {
+          const result = await runQueueItem(nextItem);
+          setResultImage(result.imageDataUrl);
+          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'done', resultImage: result.imageDataUrl } : item));
+          setStatus('队列任务完成');
+          addLog('info', `任务完成：${nextItem.prompt}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '图片生成失败';
+          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'failed', error: message } : item));
+          setStatus(message);
+          addLog('error', message);
+        }
+      }
+    } finally {
+      queueRunnerRef.current = false;
+      setIsGenerating(false);
+      setCountdown(0);
+    }
+  }
+
   async function handleReferenceFiles(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []).filter((file) => file.type.startsWith('image/'));
     if (files.length === 0) {
@@ -83,6 +227,11 @@ function App() {
     setReferenceImages((current) => [...current, ...assets]);
     setSelectedReferenceIndex(referenceImages.length);
     event.target.value = '';
+  }
+
+  function removeReferenceImage(indexToRemove: number) {
+    setReferenceImages((current) => current.filter((_image, index) => index !== indexToRemove));
+    setSelectedReferenceIndex(0);
   }
 
   function getCanvasPoint(event: PointerEvent<HTMLCanvasElement>) {
@@ -121,45 +270,39 @@ function App() {
     setMaskDataUrl(undefined);
   }
 
+  function addCurrentToQueue() {
+    const validationError = validateInput();
+    if (validationError) {
+      setStatus(validationError);
+      addLog('error', validationError);
+      return undefined;
+    }
+
+    const item = snapshotQueueItem();
+    setQueue((current) => [...current, item]);
+    setSelectedQueueItemId(item.id);
+    setStatus('已加入生成队列');
+    addLog('info', `加入队列：${item.prompt}`);
+    return item;
+  }
+
   async function generateImage() {
-    if (!settings.apiKey.trim()) {
-      setStatus('请填写 API Key');
-      return;
+    const item = addCurrentToQueue();
+    if (item) {
+      window.setTimeout(() => void runQueue(), 0);
+    }
+  }
+
+  function selectQueueItem(item: QueueItem) {
+    setSelectedQueueItemId(item.id);
+    if (item.resultImage) {
+      setResultImage(item.resultImage);
     }
 
-    if (/[^\x20-\x7e]/.test(settings.apiKey.trim())) {
-      setStatus('API Key 只能包含英文/数字/ASCII 符号，请检查是否粘贴了中文、全角字符或多余说明文字');
-      return;
-    }
-
-    if (!prompt.trim()) {
-      setStatus('请填写提示词');
-      return;
-    }
-
-    setIsGenerating(true);
-    setStatus('正在调用图片生成 API...');
-
-    try {
-      if (!window.desktopApi) {
-        setStatus('桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面');
-        return;
-      }
-
-      const request: GenerateImageRequest = {
-        settings,
-        prompt,
-        size,
-        referenceImages,
-        maskImage: maskDataUrl ? { name: 'mask.png', mimeType: 'image/png', dataUrl: maskDataUrl } : undefined
-      };
-      const result = await window.desktopApi.generateImage(request);
-      setResultImage(result.imageDataUrl);
-      setStatus('图片生成完成');
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : '图片生成失败');
-    } finally {
-      setIsGenerating(false);
+    if (item.error) {
+      setStatus(item.error);
+    } else {
+      setStatus(`队列任务状态：${item.status}`);
     }
   }
 
@@ -176,6 +319,7 @@ function App() {
     const result = await window.desktopApi.saveImage(resultImage);
     if (!result.canceled) {
       setStatus(`已保存：${result.filePath}`);
+      addLog('info', `已保存：${result.filePath}`);
     }
   }
 
@@ -185,61 +329,48 @@ function App() {
         <h1>GPT Image 2 Studio</h1>
         <p className="subtitle">跨 macOS / Windows 的参考图编辑与生成工具</p>
 
-        <label>
-          API Base URL
-          <input value={settings.apiBaseUrl} onChange={(event) => setSettings({ ...settings, apiBaseUrl: event.target.value })} />
-        </label>
+        <label>API Base URL<input value={settings.apiBaseUrl} onChange={(event) => setSettings({ ...settings, apiBaseUrl: event.target.value })} /></label>
+        <label>API Key<input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} placeholder="sk-..." /></label>
+        <label>Model<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
+        <label>图片尺寸<select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>{IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <label>生成提示词<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." /></label>
+        <label>计时器延迟（秒）<input type="number" min="0" max="3600" value={delaySeconds} onChange={(event) => setDelaySeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
 
-        <label>
-          API Key
-          <input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} placeholder="sk-..." />
-        </label>
-
-        <label>
-          Model
-          <input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} />
-        </label>
-
-        <label>
-          图片尺寸
-          <select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>
-            {IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}
-          </select>
-        </label>
-
-        <label>
-          生成提示词
-          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." />
-        </label>
-
-        <button className="primary" disabled={!canSubmit} onClick={generateImage}>{isGenerating ? '生成中...' : '生成图片'}</button>
-        <p className="status">{status}</p>
+        <div className="button-row">
+          <button className="primary" disabled={!canSubmit} onClick={generateImage}>{isGenerating ? '生成中...' : '生成图片'}</button>
+          <button disabled={!canSubmit} onClick={addCurrentToQueue}>加入队列</button>
+          <button disabled={!hasPendingQueue || isGenerating} onClick={() => void runQueue()}>执行队列</button>
+        </div>
+        <p className="status">{status}{countdown > 0 ? `（${countdown}s）` : ''}</p>
       </section>
 
       <section className="workspace">
-        <div className="panel reference-panel">
-          <div className="panel-title">
-            <h2>参考图</h2>
-            <label className="file-button">
-              添加图片
-              <input multiple accept="image/*" type="file" onChange={handleReferenceFiles} />
-            </label>
+        <div className="top-grid">
+          <div className="panel reference-panel">
+            <div className="panel-title"><h2>参考图区域</h2><label className="file-button">添加图片<input multiple accept="image/*" type="file" onChange={handleReferenceFiles} /></label></div>
+            <div className="thumb-list">
+              {referenceImages.map((image, index) => (
+                <button className={index === selectedReferenceIndex ? 'thumb active' : 'thumb'} key={`${image.name}-${index}`} onClick={() => setSelectedReferenceIndex(index)}>
+                  <img src={image.dataUrl} alt={image.name} /><span>{image.name}</span><small onClick={(event) => { event.stopPropagation(); removeReferenceImage(index); }}>移除</small>
+                </button>
+              ))}
+              {referenceImages.length === 0 && <div className="compact-empty">可不添加参考图直接生成</div>}
+            </div>
           </div>
 
-          <div className="thumb-list">
-            {referenceImages.map((image, index) => (
-              <button className={index === selectedReferenceIndex ? 'thumb active' : 'thumb'} key={`${image.name}-${index}`} onClick={() => setSelectedReferenceIndex(index)}>
-                <img src={image.dataUrl} alt={image.name} />
-                <span>{image.name}</span>
-              </button>
-            ))}
+          <div className="panel queue-panel">
+            <div className="panel-title"><h2>队列</h2><button onClick={() => { setQueue(() => []); setSelectedQueueItemId(undefined); }} disabled={queue.length === 0 || isGenerating}>清空</button></div>
+            <div className="queue-list">
+              {queue.map((item) => <button className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}`} key={item.id} onClick={() => selectQueueItem(item)}><strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p>{item.error && <em>{item.error}</em>}</button>)}
+              {queue.length === 0 && <div className="compact-empty">暂无队列任务</div>}
+            </div>
           </div>
         </div>
 
         <div className="editor-grid">
           <div className="panel canvas-panel">
             <div className="panel-title">
-              <h2>遮罩绘制</h2>
+              <h2>绘制区域</h2>
               <div className="toolbar">
                 <button className={brushMode === 'draw' ? 'active-tool' : ''} onClick={() => setBrushMode('draw')}>绘制</button>
                 <button className={brushMode === 'erase' ? 'active-tool' : ''} onClick={() => setBrushMode('erase')}>擦除</button>
@@ -247,29 +378,25 @@ function App() {
                 <button onClick={clearMask}>清空</button>
               </div>
             </div>
-
             <div className="mask-stage">
               {selectedReference ? <img className="base-image" src={selectedReference.dataUrl} alt="当前参考图" /> : <div className="empty-state">添加参考图后可绘制遮罩</div>}
-              {selectedReference && (
-                <canvas
-                  ref={canvasRef}
-                  className="mask-canvas"
-                  style={{ aspectRatio: imageRef.current ? `${imageRef.current.naturalWidth} / ${imageRef.current.naturalHeight}` : undefined }}
-                  onPointerDown={(event) => { setIsDrawing(true); event.currentTarget.setPointerCapture(event.pointerId); paintMask(event); }}
-                  onPointerMove={(event) => { if (isDrawing) paintMask(event); }}
-                  onPointerUp={() => setIsDrawing(false)}
-                  onPointerCancel={() => setIsDrawing(false)}
-                />
-              )}
+              {selectedReference && <canvas ref={canvasRef} className="mask-canvas" style={{ aspectRatio: imageRef.current ? `${imageRef.current.naturalWidth} / ${imageRef.current.naturalHeight}` : undefined }} onPointerDown={(event) => { setIsDrawing(true); event.currentTarget.setPointerCapture(event.pointerId); paintMask(event); }} onPointerMove={(event) => { if (isDrawing) paintMask(event); }} onPointerUp={() => setIsDrawing(false)} onPointerCancel={() => setIsDrawing(false)} />}
             </div>
           </div>
 
-          <div className="panel result-panel">
-            <div className="panel-title">
-              <h2>生成结果</h2>
-              <button disabled={!resultImage} onClick={saveResult}>保存图片</button>
+          <div className="side-stack">
+            <div className="panel result-panel">
+              <div className="panel-title"><h2>生成结果</h2><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
+              {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · {selectedQueueItem.prompt}</p>}
+              {resultImage ? <img className="result-image" src={resultImage} alt="生成结果" /> : <div className="empty-state">生成后的图片会显示在这里</div>}
             </div>
-            {resultImage ? <img className="result-image" src={resultImage} alt="生成结果" /> : <div className="empty-state">生成后的图片会显示在这里</div>}
+            <div className="panel log-panel">
+              <div className="panel-title"><h2>调用日志</h2><button onClick={() => setLogs([])} disabled={logs.length === 0}>清空</button></div>
+              <div className="log-list">
+                {logs.map((log) => <div className={`log-entry ${log.level}`} key={log.id}><span>{log.timestamp}</span><p>{log.message}</p></div>)}
+                {logs.length === 0 && <div className="compact-empty">暂无日志。macOS TSM/IMKCFRunLoopWakeUpReliable 通常是系统输入法噪声，不影响生成。</div>}
+              </div>
+            </div>
           </div>
         </div>
       </section>
