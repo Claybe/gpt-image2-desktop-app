@@ -28,15 +28,56 @@ function createWindow() {
   }
 }
 
-function dataUrlToBlob(asset: ImageAsset): Blob {
+function dataUrlToBuffer(asset: ImageAsset): Buffer {
   const base64 = asset.dataUrl.split(',')[1] ?? '';
-  const bytes = Buffer.from(base64, 'base64');
-  return new Blob([bytes], { type: asset.mimeType });
+  return Buffer.from(base64, 'base64');
+}
+
+function safeMimeType(mimeType: string): string {
+  return ['image/png', 'image/jpeg', 'image/webp'].includes(mimeType) ? mimeType : 'image/png';
 }
 
 function safeUploadFileName(prefix: string, index: number, mimeType: string): string {
-  const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
-  return `${prefix}-${index + 1}.${extension}`;
+  const extensionByMimeType: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/webp': 'webp'
+  };
+  return `${prefix}-${index + 1}.${extensionByMimeType[safeMimeType(mimeType)] ?? 'png'}`;
+}
+
+function appendMultipartField(parts: Buffer[], boundary: string, name: string, value: string): void {
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`, 'utf8'));
+}
+
+function appendMultipartFile(parts: Buffer[], boundary: string, name: string, fileName: string, mimeType: string, data: Buffer): void {
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"; filename="${fileName}"\r\nContent-Type: ${safeMimeType(mimeType)}\r\n\r\n`, 'utf8'));
+  parts.push(data);
+  parts.push(Buffer.from('\r\n', 'utf8'));
+}
+
+function createEditMultipartBody(request: GenerateImageRequest): { body: Buffer; contentType: string } {
+  const boundary = `----gpt-image2-${Date.now().toString(16)}`;
+  const parts: Buffer[] = [];
+
+  appendMultipartField(parts, boundary, 'model', request.settings.model);
+  appendMultipartField(parts, boundary, 'prompt', request.prompt);
+  appendMultipartField(parts, boundary, 'size', request.size);
+
+  request.referenceImages.forEach((image, index) => {
+    appendMultipartFile(parts, boundary, 'image', safeUploadFileName('reference', index, image.mimeType), image.mimeType, dataUrlToBuffer(image));
+  });
+
+  if (request.maskImage) {
+    appendMultipartFile(parts, boundary, 'mask', safeUploadFileName('mask', 0, request.maskImage.mimeType), request.maskImage.mimeType, dataUrlToBuffer(request.maskImage));
+  }
+
+  parts.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
+
+  return {
+    body: Buffer.concat(parts),
+    contentType: `multipart/form-data; boundary=${boundary}`
+  };
 }
 
 function pickImageDataUrl(responseBody: unknown): string | null {
@@ -57,33 +98,20 @@ function pickImageDataUrl(responseBody: unknown): string | null {
 ipcMain.handle('image:generate', async (_event, request: GenerateImageRequest): Promise<GenerateImageResult> => {
   const hasReferenceImages = request.referenceImages.length > 0;
   const endpoint = `${request.settings.apiBaseUrl.replace(/\/$/, '')}${hasReferenceImages ? '/images/edits' : '/images/generations'}`;
-  const body = hasReferenceImages ? new FormData() : {
+  const requestBody = hasReferenceImages ? createEditMultipartBody(request) : undefined;
+  const jsonBody = hasReferenceImages ? undefined : {
     model: request.settings.model,
     prompt: request.prompt,
     size: request.size
   };
 
-  if (body instanceof FormData) {
-    body.set('model', request.settings.model);
-    body.set('prompt', request.prompt);
-    body.set('size', request.size);
-
-    request.referenceImages.forEach((image, index) => {
-      body.append('image', dataUrlToBlob(image), safeUploadFileName('reference', index, image.mimeType));
-    });
-
-    if (request.maskImage) {
-      body.set('mask', dataUrlToBlob(request.maskImage), safeUploadFileName('mask', 0, request.maskImage.mimeType));
-    }
-  }
-
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${request.settings.apiKey}`,
-      ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
+      ...(requestBody ? { 'Content-Type': requestBody.contentType } : { 'Content-Type': 'application/json' })
     },
-    body: body instanceof FormData ? body : JSON.stringify(body)
+    body: requestBody ? new Uint8Array(requestBody.body) : JSON.stringify(jsonBody)
   });
 
   const responseBody = await response.json().catch(() => ({}));
