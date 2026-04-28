@@ -34,6 +34,11 @@ function dataUrlToBlob(asset: ImageAsset): Blob {
   return new Blob([bytes], { type: asset.mimeType });
 }
 
+function safeUploadFileName(prefix: string, index: number, mimeType: string): string {
+  const extension = mimeType.split('/')[1]?.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'png';
+  return `${prefix}-${index + 1}.${extension}`;
+}
+
 function pickImageDataUrl(responseBody: unknown): string | null {
   const body = responseBody as { data?: Array<{ b64_json?: string; url?: string }> };
   const first = body.data?.[0];
@@ -64,11 +69,11 @@ ipcMain.handle('image:generate', async (_event, request: GenerateImageRequest): 
     body.set('size', request.size);
 
     request.referenceImages.forEach((image, index) => {
-      body.append('image', dataUrlToBlob(image), image.name || `reference-${index + 1}.png`);
+      body.append('image', dataUrlToBlob(image), safeUploadFileName('reference', index, image.mimeType));
     });
 
     if (request.maskImage) {
-      body.set('mask', dataUrlToBlob(request.maskImage), request.maskImage.name || 'mask.png');
+      body.set('mask', dataUrlToBlob(request.maskImage), safeUploadFileName('mask', 0, request.maskImage.mimeType));
     }
   }
 
