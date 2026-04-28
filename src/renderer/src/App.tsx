@@ -136,6 +136,11 @@ function App() {
     setStatus('正在调用图片生成 API...');
 
     try {
+      if (!window.desktopApi) {
+        setStatus('桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面');
+        return;
+      }
+
       const request: GenerateImageRequest = {
         settings,
         prompt,
@@ -155,6 +160,11 @@ function App() {
 
   async function saveResult() {
     if (!resultImage) {
+      return;
+    }
+
+    if (!window.desktopApi) {
+      setStatus('桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面');
       return;
     }
 
