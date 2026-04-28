@@ -95,7 +95,16 @@ function pickImageDataUrl(responseBody: unknown): string | null {
   return null;
 }
 
+function assertAsciiHeaderValue(name: string, value: string): void {
+  if (/[^\x20-\x7e]/.test(value)) {
+    throw new Error(`${name} 只能包含英文/数字/ASCII 符号，请检查是否粘贴了中文、全角字符或多余说明文字`);
+  }
+}
+
 ipcMain.handle('image:generate', async (_event, request: GenerateImageRequest): Promise<GenerateImageResult> => {
+  const apiKey = request.settings.apiKey.trim();
+  assertAsciiHeaderValue('API Key', apiKey);
+
   const hasReferenceImages = request.referenceImages.length > 0;
   const endpoint = `${request.settings.apiBaseUrl.replace(/\/$/, '')}${hasReferenceImages ? '/images/edits' : '/images/generations'}`;
   const requestBody = hasReferenceImages ? createEditMultipartBody(request) : undefined;
@@ -108,7 +117,7 @@ ipcMain.handle('image:generate', async (_event, request: GenerateImageRequest): 
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${request.settings.apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
       ...(requestBody ? { 'Content-Type': requestBody.contentType } : { 'Content-Type': 'application/json' })
     },
     body: requestBody ? new Uint8Array(requestBody.body) : JSON.stringify(jsonBody)

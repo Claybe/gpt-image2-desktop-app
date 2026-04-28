@@ -127,6 +127,11 @@ function App() {
       return;
     }
 
+    if (/[^\x20-\x7e]/.test(settings.apiKey.trim())) {
+      setStatus('API Key 只能包含英文/数字/ASCII 符号，请检查是否粘贴了中文、全角字符或多余说明文字');
+      return;
+    }
+
     if (!prompt.trim()) {
       setStatus('请填写提示词');
       return;
