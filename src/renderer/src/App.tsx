@@ -24,6 +24,7 @@ interface QueueItem {
   createdAt: string;
   error?: string;
   resultImage?: string;
+  elapsedSeconds?: number;
 }
 
 interface LogEntry {
@@ -46,11 +47,19 @@ function formatClock(date = new Date()) {
   return date.toLocaleTimeString('zh-CN', { hour12: false });
 }
 
+function formatDuration(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const restSeconds = seconds % 60;
+  return minutes > 0 ? `${minutes}分${restSeconds}秒` : `${restSeconds}秒`;
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const queueRunnerRef = useRef(false);
   const queueRef = useRef<QueueItem[]>([]);
+  const elapsedTimerRef = useRef<number | undefined>(undefined);
+  const taskStartTimeRef = useRef(0);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gpt-image2-settings');
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
@@ -66,8 +75,7 @@ function App() {
   const [resultImage, setResultImage] = useState<string>();
   const [status, setStatus] = useState('准备就绪');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [delaySeconds, setDelaySeconds] = useState(0);
-  const [countdown, setCountdown] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [queue, setQueueState] = useState<QueueItem[]>([]);
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string>();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -112,6 +120,29 @@ function App() {
     imageRef.current = image;
   }, [selectedReference]);
 
+  function startElapsedTimer() {
+    taskStartTimeRef.current = Date.now();
+    setElapsedSeconds(0);
+    if (elapsedTimerRef.current) {
+      window.clearInterval(elapsedTimerRef.current);
+    }
+
+    elapsedTimerRef.current = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - taskStartTimeRef.current) / 1000));
+    }, 1000);
+  }
+
+  function stopElapsedTimer() {
+    const elapsed = Math.floor((Date.now() - taskStartTimeRef.current) / 1000);
+    if (elapsedTimerRef.current) {
+      window.clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = undefined;
+    }
+
+    setElapsedSeconds(elapsed);
+    return elapsed;
+  }
+
   function addLog(level: LogEntry['level'], message: string) {
     setLogs((current) => [{ id: crypto.randomUUID(), level, message, timestamp: formatClock() }, ...current].slice(0, 80));
   }
@@ -148,25 +179,11 @@ function App() {
     };
   }
 
-  async function waitForDelay() {
-    if (delaySeconds <= 0) {
-      return;
-    }
-
-    for (let remaining = delaySeconds; remaining > 0; remaining -= 1) {
-      setCountdown(remaining);
-      setStatus(`计时器等待中：${remaining} 秒`);
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-    }
-    setCountdown(0);
-  }
-
   async function runQueueItem(item: QueueItem) {
     if (!window.desktopApi) {
       throw new Error('桌面桥接未加载，请使用 npm run dev 启动 Electron 应用，不要直接打开浏览器页面');
     }
 
-    await waitForDelay();
     const request: GenerateImageRequest = {
       settings,
       prompt: item.prompt,
@@ -198,22 +215,24 @@ function App() {
         addLog('info', `开始任务：${nextItem.prompt}`);
 
         try {
+          startElapsedTimer();
           const result = await runQueueItem(nextItem);
+          const elapsed = stopElapsedTimer();
           setResultImage(result.imageDataUrl);
-          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'done', resultImage: result.imageDataUrl } : item));
-          setStatus('队列任务完成');
-          addLog('info', `任务完成：${nextItem.prompt}`);
+          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'done', resultImage: result.imageDataUrl, elapsedSeconds: elapsed } : item));
+          setStatus(`队列任务完成，用时 ${formatDuration(elapsed)}`);
+          addLog('info', `任务完成：${nextItem.prompt}，用时 ${formatDuration(elapsed)}`);
         } catch (error) {
+          const elapsed = stopElapsedTimer();
           const message = error instanceof Error ? error.message : '图片生成失败';
-          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'failed', error: message } : item));
-          setStatus(message);
-          addLog('error', message);
+          setQueue((current) => current.map((item) => item.id === nextItem.id ? { ...item, status: 'failed', error: message, elapsedSeconds: elapsed } : item));
+          setStatus(`${message}，用时 ${formatDuration(elapsed)}`);
+          addLog('error', `${message}，用时 ${formatDuration(elapsed)}`);
         }
       }
     } finally {
       queueRunnerRef.current = false;
       setIsGenerating(false);
-      setCountdown(0);
     }
   }
 
@@ -334,14 +353,14 @@ function App() {
         <label>Model<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
         <label>图片尺寸<select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>{IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>生成提示词<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." /></label>
-        <label>计时器延迟（秒）<input type="number" min="0" max="3600" value={delaySeconds} onChange={(event) => setDelaySeconds(Math.max(0, Number(event.target.value) || 0))} /></label>
+        <div className="timer-card">当前耗时 <strong>{formatDuration(elapsedSeconds)}</strong></div>
 
         <div className="button-row">
           <button className="primary" disabled={!canSubmit} onClick={generateImage}>{isGenerating ? '生成中...' : '生成图片'}</button>
           <button disabled={!canSubmit} onClick={addCurrentToQueue}>加入队列</button>
           <button disabled={!hasPendingQueue || isGenerating} onClick={() => void runQueue()}>执行队列</button>
         </div>
-        <p className="status">{status}{countdown > 0 ? `（${countdown}s）` : ''}</p>
+        <p className="status">{status} · 当前耗时 {formatDuration(elapsedSeconds)}</p>
       </section>
 
       <section className="workspace">
@@ -361,7 +380,7 @@ function App() {
           <div className="panel queue-panel">
             <div className="panel-title"><h2>队列</h2><button onClick={() => { setQueue(() => []); setSelectedQueueItemId(undefined); }} disabled={queue.length === 0 || isGenerating}>清空</button></div>
             <div className="queue-list">
-              {queue.map((item) => <button className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}`} key={item.id} onClick={() => selectQueueItem(item)}><strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p>{item.error && <em>{item.error}</em>}</button>)}
+              {queue.map((item) => <button className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}`} key={item.id} onClick={() => selectQueueItem(item)}><strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p>{typeof item.elapsedSeconds === 'number' && <small>用时 {formatDuration(item.elapsedSeconds)}</small>}{item.error && <em>{item.error}</em>}</button>)}
               {queue.length === 0 && <div className="compact-empty">暂无队列任务</div>}
             </div>
           </div>
@@ -387,14 +406,14 @@ function App() {
           <div className="side-stack">
             <div className="panel result-panel">
               <div className="panel-title"><h2>生成结果</h2><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
-              {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · {selectedQueueItem.prompt}</p>}
+              {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · 用时 {formatDuration(selectedQueueItem.elapsedSeconds ?? elapsedSeconds)} · {selectedQueueItem.prompt}</p>}
               {resultImage ? <img className="result-image" src={resultImage} alt="生成结果" /> : <div className="empty-state">生成后的图片会显示在这里</div>}
             </div>
             <div className="panel log-panel">
               <div className="panel-title"><h2>调用日志</h2><button onClick={() => setLogs([])} disabled={logs.length === 0}>清空</button></div>
               <div className="log-list">
                 {logs.map((log) => <div className={`log-entry ${log.level}`} key={log.id}><span>{log.timestamp}</span><p>{log.message}</p></div>)}
-                {logs.length === 0 && <div className="compact-empty">暂无日志。macOS TSM/IMKCFRunLoopWakeUpReliable 通常是系统输入法噪声，不影响生成。</div>}
+                {logs.length === 0 && <div className="compact-empty">暂无日志</div>}
               </div>
             </div>
           </div>

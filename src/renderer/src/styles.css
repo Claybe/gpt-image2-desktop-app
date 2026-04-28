@@ -114,6 +114,22 @@ textarea {
   resize: vertical;
 }
 
+.timer-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  padding: 12px;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+.timer-card strong {
+  color: #f8fafc;
+  font-size: 18px;
+}
+
 .primary {
   padding: 14px 16px;
   color: white;
@@ -271,11 +287,16 @@ textarea {
 }
 
 .queue-item p,
-.queue-item em {
+.queue-item em,
+.queue-item small {
   grid-column: 1 / -1;
   color: #e2e8f0;
   font-size: 13px;
   line-height: 1.4;
+}
+
+.queue-item small {
+  color: #94a3b8;
 }
 
 .queue-item em {
