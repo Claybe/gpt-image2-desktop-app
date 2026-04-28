@@ -21,6 +21,7 @@ interface QueueItem {
   size: ImageSize;
   referenceImages: ImageAsset[];
   maskImage?: ImageAsset;
+  maskSourceDataUrl?: string;
   maskMode?: MaskMode;
   parentTaskId?: string;
   status: QueueStatus;
@@ -109,6 +110,7 @@ function App() {
   const timersRef = useRef<Record<string, number>>({});
   const startTimesRef = useRef<Record<string, number>>({});
   const selectedQueueItemIdRef = useRef<string | undefined>(undefined);
+  const pendingMaskDataUrlRef = useRef<string | undefined>(undefined);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gpt-image2-settings');
     return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
@@ -223,7 +225,25 @@ function App() {
       canvas.height = image.naturalHeight;
       const context = canvas.getContext('2d');
       context?.clearRect(0, 0, canvas.width, canvas.height);
-      setMaskDataUrl(undefined);
+
+      const pendingMaskDataUrl = pendingMaskDataUrlRef.current;
+      pendingMaskDataUrlRef.current = undefined;
+      if (pendingMaskDataUrl) {
+        loadImage(pendingMaskDataUrl).then((maskImage) => {
+          if (canvasRef.current !== canvas) {
+            return;
+          }
+
+          context?.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
+          setMaskDataUrl(canvas.toDataURL('image/png'));
+        }).catch((error) => {
+          const message = error instanceof Error ? error.message : '遮罩图片加载失败';
+          setStatus(message);
+          addLog('error', message);
+        });
+      } else {
+        setMaskDataUrl(undefined);
+      }
     };
     image.src = selectedReference.dataUrl;
     imageRef.current = image;
@@ -260,6 +280,7 @@ function App() {
       size,
       referenceImages: [...referenceImages],
       maskImage: maskDataUrl ? await createMaskAsset(maskDataUrl, maskMode) : undefined,
+      maskSourceDataUrl: maskDataUrl,
       maskMode,
       parentTaskId: contextSourceTaskId,
       status: 'running',
@@ -368,6 +389,51 @@ function App() {
     setMaskDataUrl(canvas.toDataURL('image/png'));
   }
 
+  async function handleMaskFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !file.type.startsWith('image/')) {
+      return;
+    }
+
+    if (!canvasRef.current) {
+      setStatus('请先选择参考图后再导入遮罩');
+      return;
+    }
+
+    try {
+      const asset = await readFileAsAsset(file);
+      const image = await loadImage(asset.dataUrl);
+      const canvas = canvasRef.current;
+      const context = canvas.getContext('2d');
+      context?.clearRect(0, 0, canvas.width, canvas.height);
+      context?.drawImage(image, 0, 0, canvas.width, canvas.height);
+      setMaskDataUrl(canvas.toDataURL('image/png'));
+      setStatus('已导入遮罩图');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '导入遮罩图失败';
+      setStatus(message);
+      addLog('error', message);
+    }
+  }
+
+  function showMaskModeHelp() {
+    window.alert([
+      '遮罩模式说明：',
+      '',
+      '1. 透明区保护（默认推荐）',
+      '适合使用本工具画笔绘制的遮罩。你画过的区域会被转换成透明区域，通常表示允许 API 重绘；没有画过的区域保持不透明，通常表示保护原图不变。',
+      '',
+      '2. 灰度原样',
+      '适合导入已经准备好的黑白/灰度 mask。系统会按亮度保留原始灰度关系：越亮影响越强，越暗影响越弱。',
+      '',
+      '3. 灰度反转',
+      '适合发现编辑区域刚好相反时使用。系统会先转灰度，再把黑白关系反过来：原本亮的区域变暗，原本暗的区域变亮。',
+      '',
+      '建议：如果是直接用画笔画遮罩，优先使用“透明区保护”；如果是导入外部 mask，根据接口效果选择“灰度原样”或“灰度反转”。'
+    ].join('\n'));
+  }
+
   function clearMask() {
     const canvas = canvasRef.current;
     const context = canvas?.getContext('2d');
@@ -453,9 +519,10 @@ function App() {
 
   function selectQueueItem(item: QueueItem) {
     setSelectedQueueItemId(item.id);
+    pendingMaskDataUrlRef.current = item.maskSourceDataUrl ?? item.maskImage?.dataUrl;
     setReferenceImages(item.referenceImages);
     setSelectedReferenceIndex(0);
-    setMaskDataUrl(item.maskImage?.dataUrl);
+    setMaskDataUrl(item.maskSourceDataUrl ?? item.maskImage?.dataUrl);
     setMaskMode(item.maskMode ?? 'alpha');
     setResultImage(item.resultImage);
 
@@ -570,7 +637,8 @@ function App() {
                 <button className={brushMode === 'draw' ? 'active-tool' : ''} onClick={() => setBrushMode('draw')}>绘制</button>
                 <button className={brushMode === 'erase' ? 'active-tool' : ''} onClick={() => setBrushMode('erase')}>擦除</button>
                 <label className="range-label">笔刷 {brushSize}px<input type="range" min="8" max="120" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /></label>
-                <label className="mask-mode-label">遮罩模式<select value={maskMode} onChange={(event) => setMaskMode(event.target.value as MaskMode)}><option value="alpha">透明区保护</option><option value="gray">灰度原样</option><option value="invert-gray">灰度反转</option></select></label>
+                <label className="mask-mode-label">遮罩模式<select value={maskMode} onChange={(event) => setMaskMode(event.target.value as MaskMode)}><option value="alpha">透明区保护</option><option value="gray">灰度原样</option><option value="invert-gray">灰度反转</option></select><button className="help-button" type="button" onClick={showMaskModeHelp}>?</button></label>
+                <label className="file-button">导入遮罩<input accept="image/*" type="file" onChange={handleMaskFile} /></label>
                 <button onClick={clearMask}>清空</button>
               </div>
             </div>

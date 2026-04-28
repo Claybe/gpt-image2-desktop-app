@@ -433,6 +433,22 @@ textarea {
   padding: 8px 10px;
 }
 
+.help-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  padding: 0;
+  color: #c4b5fd;
+  background: rgba(49, 46, 129, 0.78);
+  font-weight: 700;
+}
+
+.help-button:hover:not(:disabled) {
+  background: #4338ca;
+}
+
 .canvas-panel,
 .result-panel,
 .log-panel,
