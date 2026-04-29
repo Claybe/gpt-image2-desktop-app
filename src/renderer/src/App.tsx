@@ -135,7 +135,12 @@ function App() {
 
     try {
       const parsed = JSON.parse(saved) as QueueItem[];
-      return parsed.map((item) => ({ ...item, status: item.status === 'running' ? 'failed' : item.status, error: item.status === 'running' ? '应用重启后任务已停止，请重新生成' : item.error }));
+      return parsed.map((item) => ({
+        ...item,
+        referenceImages: item.referenceImages ?? [],
+        status: item.status === 'running' ? 'failed' : item.status,
+        error: item.status === 'running' ? '应用重启后任务已停止，请重新生成' : item.error
+      }));
     } catch {
       localStorage.removeItem(QUEUE_STORAGE_KEY);
       return [];
@@ -624,7 +629,7 @@ function App() {
             </div>
             <div className="queue-list" ref={queueListRef}>
               {queue.map((item) => {
-                const thumbnail = item.resultImage ?? item.referenceImages[0]?.dataUrl ?? item.maskImage?.dataUrl;
+                const thumbnail = item.resultImage ?? item.referenceImages?.[0]?.dataUrl ?? item.maskImage?.dataUrl;
                 return <div data-queue-id={item.id} className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}${selectedQueueIds.includes(item.id) ? ' selected' : ''}`} key={item.id} onClick={() => handleQueueItemClick(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleQueueItemClick(item); }} role="button" tabIndex={0}>{isQueueSelecting && <span className="queue-check">{selectedQueueIds.includes(item.id) ? '已选' : '选择'}</span>}{thumbnail ? <img className="queue-thumb" src={thumbnail} alt="任务缩略图" /> : <div className="queue-thumb queue-thumb-empty">无图</div>}<strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p><small>用时 {formatDuration(item.elapsedSeconds)}</small>{item.error && <em>{item.error}</em>}{item.status === 'done' && item.resultImage && !isQueueSelecting && <button className="context-action-button" type="button" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>填入参考图</button>}</div>;
               })}
               {queue.length === 0 && <div className="compact-empty">暂无队列任务</div>}
