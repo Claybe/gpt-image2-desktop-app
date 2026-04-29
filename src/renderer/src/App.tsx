@@ -102,6 +102,25 @@ async function createMaskAsset(dataUrl: string, mode: MaskMode): Promise<ImageAs
   return { name: `mask-${mode}.png`, mimeType: 'image/png', dataUrl: canvas.toDataURL('image/png') };
 }
 
+function normalizeQueueItem(item: Partial<QueueItem>): QueueItem {
+  const status = item.status === 'done' || item.status === 'failed' || item.status === 'running' ? item.status : 'failed';
+  return {
+    id: item.id ?? crypto.randomUUID(),
+    prompt: item.prompt ?? '',
+    size: item.size ?? '1024x1024',
+    referenceImages: item.referenceImages ?? [],
+    maskImage: item.maskImage,
+    maskSourceDataUrl: item.maskSourceDataUrl,
+    maskMode: item.maskMode,
+    parentTaskId: item.parentTaskId,
+    status: status === 'running' ? 'failed' : status,
+    createdAt: item.createdAt ?? formatClock(),
+    error: status === 'running' ? '应用重启后任务已停止，请重新生成' : item.error,
+    resultImage: item.resultImage,
+    elapsedSeconds: item.elapsedSeconds ?? 0
+  };
+}
+
 function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -113,7 +132,16 @@ function App() {
   const pendingMaskDataUrlRef = useRef<string | undefined>(undefined);
   const [settings, setSettings] = useState<AppSettings>(() => {
     const saved = localStorage.getItem('gpt-image2-settings');
-    return saved ? { ...DEFAULT_SETTINGS, ...JSON.parse(saved) } : DEFAULT_SETTINGS;
+    if (!saved) {
+      return DEFAULT_SETTINGS;
+    }
+
+    try {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
+    } catch {
+      localStorage.removeItem('gpt-image2-settings');
+      return DEFAULT_SETTINGS;
+    }
   });
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState<ImageSize>('1024x1024');
@@ -134,13 +162,13 @@ function App() {
     }
 
     try {
-      const parsed = JSON.parse(saved) as QueueItem[];
-      return parsed.map((item) => ({
-        ...item,
-        referenceImages: item.referenceImages ?? [],
-        status: item.status === 'running' ? 'failed' : item.status,
-        error: item.status === 'running' ? '应用重启后任务已停止，请重新生成' : item.error
-      }));
+      const parsed = JSON.parse(saved) as Array<Partial<QueueItem>>;
+      if (!Array.isArray(parsed)) {
+        localStorage.removeItem(QUEUE_STORAGE_KEY);
+        return [];
+      }
+
+      return parsed.map(normalizeQueueItem);
     } catch {
       localStorage.removeItem(QUEUE_STORAGE_KEY);
       return [];
@@ -303,7 +331,7 @@ function App() {
       settings,
       prompt: item.prompt,
       size: item.size,
-      referenceImages: item.referenceImages,
+      referenceImages: item.referenceImages ?? [],
       maskImage: item.maskImage,
       maskMode: item.maskMode
     };
@@ -525,7 +553,7 @@ function App() {
   function selectQueueItem(item: QueueItem) {
     setSelectedQueueItemId(item.id);
     pendingMaskDataUrlRef.current = item.maskSourceDataUrl ?? item.maskImage?.dataUrl;
-    setReferenceImages(item.referenceImages);
+    setReferenceImages(item.referenceImages ?? []);
     setSelectedReferenceIndex(0);
     setMaskDataUrl(item.maskSourceDataUrl ?? item.maskImage?.dataUrl);
     setMaskMode(item.maskMode ?? 'alpha');
@@ -660,7 +688,7 @@ function App() {
             <div className="panel result-panel">
               <div className="panel-title result-title"><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(-1)}>←</button><h2>生成结果</h2><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(1)}>→</button><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
               {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · 用时 {formatDuration(selectedQueueItem.elapsedSeconds)} · {selectedQueueItem.prompt}</p>}
-              {selectedQueueItem && <p className="context-detail">上下文结果 {selectedContextResultIndex >= 0 ? selectedContextResultIndex + 1 : 0}/{contextResultItems.length} · 参考图 {selectedQueueItem.referenceImages.length} 张 · {selectedQueueItem.maskImage ? `含 mask · ${selectedQueueItem.maskMode ?? 'alpha'}` : '无 mask'}</p>}
+              {selectedQueueItem && <p className="context-detail">上下文结果 {selectedContextResultIndex >= 0 ? selectedContextResultIndex + 1 : 0}/{contextResultItems.length} · 参考图 {selectedQueueItem.referenceImages?.length ?? 0} 张 · {selectedQueueItem.maskImage ? `含 mask · ${selectedQueueItem.maskMode ?? 'alpha'}` : '无 mask'}</p>}
               {resultImage ? <button className="result-preview-button" onClick={() => setPreviewImage(resultImage)}><img className="result-image" src={resultImage} alt="生成结果" /></button> : <div className="empty-state">生成后的图片会显示在这里</div>}
             </div>
             <div className="panel log-panel">
