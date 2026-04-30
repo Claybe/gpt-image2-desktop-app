@@ -226,6 +226,19 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
   return extracted;
 }
 
+function buildInitializationGuide(configPath, missingFields) {
+  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n请先运行初始化命令：\n  /generate-image:initialize url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs initialize --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image-2\n\n配置将保存到：${configPath}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
+}
+
+function assertConfigured(configPath, apiBaseUrl, apiKey) {
+  const missingFields = [];
+  if (!apiBaseUrl) missingFields.push('url');
+  if (!apiKey) missingFields.push('apikey');
+  if (missingFields.length > 0) {
+    throw new Error(buildInitializationGuide(configPath, missingFields));
+  }
+}
+
 async function generate(args) {
   const configPath = args.config || DEFAULT_CONFIG_PATH;
   const config = await readConfig(configPath);
@@ -236,11 +249,10 @@ async function generate(args) {
   const naturalOptions = extractNaturalLanguageOptions(rawPrompt, args);
   const prompt = args.prompt ? rawPrompt : naturalOptions.prompt;
 
-  const apiBaseUrl = normalizeBaseUrl(args.url || naturalOptions.url || config.apiBaseUrl);
+  const candidateApiBaseUrl = args.url || naturalOptions.url || config.apiBaseUrl;
   const apiKey = args.apikey || args['api-key'] || naturalOptions.apiKey || config.apiKey;
-  if (!apiKey) {
-    throw new Error('缺少 API Key：请先运行 /generate-image:initialize，或传入 --apikey');
-  }
+  assertConfigured(configPath, candidateApiBaseUrl, apiKey);
+  const apiBaseUrl = normalizeBaseUrl(candidateApiBaseUrl);
 
   const size = normalizeSize(args.size || naturalOptions.size || '1024x1024');
   const model = args.model || naturalOptions.model || config.model || 'gpt-image-2';

@@ -23,9 +23,26 @@ argument-hint: "initialize --url <url> --apikey <key> | <prompt> [--size 1024x10
 
 2. `/generate-image`
    - 根据提示词生成图片。
+   - 如果还没有初始化，会自动进入初始化引导，提示用户配置 `url` 和 `apikey`。
    - 参数可以写在 slash 命令后面，也可以写在自然语言提示词里。
    - 调用时会先创建同分辨率占位图。
    - 如果生成失败，明确提示失败原因，并保留占位图路径。
+
+### npx skills 安装
+
+本仓库包含 `skills.json`，可以用 `skills` CLI 从 GitHub 安装：
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --global --copy --yes
+```
+
+也可以安装到当前项目：
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --copy --yes
+```
+
+安装后重启 Claude Code 或开启新会话，让 skill 列表重新加载。
 
 ### 初始化配置
 
@@ -94,16 +111,17 @@ node skill/generate-image/scripts/generate-image.mjs initialize --url <url> --ap
    - `output`
    - `url` / `apikey` 覆盖值
    - 其他可透传参数，使用 `--param key=value`
-2. 如果用户没有明确尺寸，默认使用 `1024x1024`。
-3. 调用 helper 脚本前，告诉用户将先生成同尺寸占位图。
-4. 调用：
+2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动引导用户运行 `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`。
+3. 如果用户没有明确尺寸，默认使用 `1024x1024`。
+4. 调用 helper 脚本前，告诉用户将先生成同尺寸占位图。
+5. 调用：
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
 ```
 
-5. 成功时报告生成图片路径和占位图路径。
-6. 失败时报告错误信息，并说明占位图已保留。
+6. 成功时报告生成图片路径和占位图路径。
+7. 失败时报告错误信息，并说明占位图已保留。
 
 ### 参数表
 
@@ -128,7 +146,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 常见失败与处理：
 
-- 未初始化：先运行 `/generate-image:initialize`。
+- 未初始化：自动进入初始化引导，提示运行 `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`。
 - API Key 缺失：补充 `--apikey` 或重新初始化。
 - 接口返回非 2xx：显示 `图片生成失败：...`。
 - 响应没有图片：显示 `响应中没有 b64_json 或 url`。
@@ -157,9 +175,26 @@ This skill exposes two entries:
 
 2. `/generate-image`
    - Generates an image from a prompt.
+   - If the skill is not initialized yet, automatically enters setup guidance and asks the user to provide `url` and `apikey`.
    - Parameters can be passed after the slash command or described in natural language.
    - Creates a same-resolution placeholder before the API call.
    - On failure, reports the error and keeps the placeholder path.
+
+### Install with npx skills
+
+This repository includes `skills.json`, so you can install the skill from GitHub with the `skills` CLI:
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --global --copy --yes
+```
+
+Project-local install:
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --copy --yes
+```
+
+Restart Claude Code or open a new session after installation so the skill list is reloaded.
 
 ### Initialize
 
@@ -226,16 +261,17 @@ For `/generate-image`:
    - `output`
    - `url` / `apikey` overrides
    - passthrough parameters as `--param key=value`
-2. Default to `1024x1024` when size is not specified.
-3. Tell the user that a same-resolution placeholder will be created first.
-4. Run:
+2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; guide the user to run `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`.
+3. Default to `1024x1024` when size is not specified.
+4. Tell the user that a same-resolution placeholder will be created first.
+5. Run:
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
 ```
 
-5. On success, report the generated image path and placeholder path.
-6. On failure, report the error and mention that the placeholder remains available.
+6. On success, report the generated image path and placeholder path.
+7. On failure, report the error and mention that the placeholder remains available.
 
 ### Parameters
 

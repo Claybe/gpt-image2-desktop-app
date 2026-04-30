@@ -11,6 +11,22 @@
 - `/generate-image:initialize`：设置 API URL、API Key、默认模型。
 - `/generate-image`：输入提示词和参数，生成图片。
 
+### npx skills 安装
+
+全局安装到 Claude Code：
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --global --copy --yes
+```
+
+安装到当前项目：
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --copy --yes
+```
+
+安装后重启 Claude Code 或开启新会话。
+
 ### 初始化示例
 
 ```text
@@ -22,6 +38,16 @@
 ```bash
 node skill/generate-image/scripts/generate-image.mjs initialize --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
 ```
+
+### 未初始化时的引导
+
+如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动提示你先运行初始化：
+
+```text
+/generate-image:initialize url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2
+```
+
+不会只返回一个模糊失败错误。
 
 ### 生成示例
 
@@ -82,6 +108,22 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 - `/generate-image:initialize`: configure API URL, API key, and default model.
 - `/generate-image`: generate an image from a prompt and parameters.
 
+### Install with npx skills
+
+Global install for Claude Code:
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --global --copy --yes
+```
+
+Project-local install:
+
+```bash
+npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agent claude-code --copy --yes
+```
+
+Restart Claude Code or open a new session after installation.
+
 ### Initialize example
 
 ```text
@@ -93,6 +135,16 @@ Internal command:
 ```bash
 node skill/generate-image/scripts/generate-image.mjs initialize --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
 ```
+
+### Setup guidance when uninitialized
+
+If `/generate-image` is used before URL or API key configuration exists, the skill automatically asks the user to initialize first:
+
+```text
+/generate-image:initialize url=<your API Base URL> apikey=<your API Key> model=gpt-image-2
+```
+
+It does not only return a vague failure.
 
 ### Generate example
 
