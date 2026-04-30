@@ -91,6 +91,16 @@ node skill/generate-image/scripts/generate-image.mjs generate \
   --param quality=high
 ```
 
+### 提示词结构要求
+
+Agent 使用 `/gi` 生成图片时，prompt 需要明确包含：`[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`。如果用户只提供简短描述，先在不改变用户意图的前提下补全这些要素。
+
+示例：
+
+```text
+[资产类型] 游戏道具图标 + [具体主体] 小飞机 + [艺术风格] 干净 3D 卡通风格 + [视角] 正侧面微俯视 + [光影细节] 柔和棚拍光、清晰高光 + [背景要求] 透明背景
+```
+
 ### 参数
 
 | 参数 | 必填 | 说明 |
@@ -216,6 +226,16 @@ node skill/generate-image/scripts/generate-image.mjs generate \
   --size 1536x1024 \
   --output-file ./.claybe/.generate-image/shanghai.png \
   --param quality=high
+```
+
+### Prompt structure requirements
+
+When an agent uses `/gi` to generate an image, the prompt should explicitly include: `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`. If the user only provides a short description, enrich it with these elements without changing the user's intent.
+
+Example:
+
+```text
+[asset type] game prop icon + [specific subject] small airplane + [art style] clean 3D cartoon style + [view angle] front-side slight top-down view + [lighting details] soft studio lighting with crisp highlights + [background requirements] transparent background
 ```
 
 ### Parameters
