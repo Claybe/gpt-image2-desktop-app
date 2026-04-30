@@ -424,13 +424,34 @@ textarea {
   color: #fde68a !important;
 }
 
-.context-action-button {
+.queue-item-actions {
   grid-column: 2 / 4;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.context-action-button {
   justify-self: start;
   padding: 7px 10px;
   color: #dbeafe;
   background: #1d4ed8;
   font-size: 13px;
+}
+
+.context-action-button.icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.context-action-button.secondary {
+  color: #e0e7ff;
+  background: rgba(79, 70, 229, 0.72);
 }
 
 .context-action-button:hover:not(:disabled) {
