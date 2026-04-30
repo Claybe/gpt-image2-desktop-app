@@ -1,0 +1,23 @@
+{
+  "skill_name": "generate-image",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/generate-image:initialize url=https://api.example.com/v1 apikey=sk-test model=gpt-image-2",
+      "expected_output": "Agent extracts url/apikey/model and initializes the config without exposing the key in summaries.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "/generate-image 一张 1536x1024 的赛博朋克城市夜景，quality=high",
+      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-resolution placeholder first, then calls generation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "/generate-image --prompt \"minimal product photo of a glass cup\" --size 1024x1536 --model gpt-image-2 --param background=transparent",
+      "expected_output": "Agent preserves explicit CLI-style parameters and reports generated image path or clear failure.",
+      "files": []
+    }
+  ]
+}
