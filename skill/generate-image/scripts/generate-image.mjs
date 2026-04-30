@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.claude', 'generate-image', 'config.json');
 const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), '.claybe', '.generate-image');
 const DEFAULT_SETTINGS_PATH = path.join(process.cwd(), 'setting.json');
-const DEFAULT_MODEL = 'gpt-image2';
+const DEFAULT_MODEL = 'gpt-image-2';
 const SIZE_RE = /^(\d+)x(\d+)$/;
 
 function usage() {
@@ -74,7 +74,14 @@ function coerceValue(value) {
 }
 
 function normalizeModel(model) {
-  return !model || model === 'auto' ? DEFAULT_MODEL : model;
+  if (!model || model === 'auto' || model === 'gpt-image2') {
+    return DEFAULT_MODEL;
+  }
+  return model;
+}
+
+function isGptImageModel(model) {
+  return model.toLowerCase().startsWith('gpt-image');
 }
 
 function normalizeBaseUrl(url) {
@@ -192,6 +199,94 @@ function pickImage(responseBody) {
   if (first?.b64_json) return { type: 'base64', value: first.b64_json };
   if (first?.url) return { type: 'url', value: first.url };
   return null;
+}
+
+function getImageFromStreamEvent(event) {
+  const base64 = event?.b64_json ?? event?.partial_image_b64 ?? event?.data?.[0]?.b64_json;
+  if (base64) return { type: 'base64', value: base64 };
+  const url = event?.url ?? event?.data?.[0]?.url;
+  if (url) return { type: 'url', value: url };
+  return null;
+}
+
+function parseSseDataChunks(buffer) {
+  const normalized = buffer.replace(/\r\n/g, '\n');
+  const parts = normalized.split('\n\n');
+  const rest = parts.pop() ?? '';
+  const chunks = parts
+    .map((part) => part.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n').trim())
+    .filter(Boolean);
+
+  return { chunks, rest };
+}
+
+function parseImageStreamEvent(data) {
+  if (data === '[DONE]') return undefined;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return undefined;
+  }
+}
+
+function isCompletedImageEvent(event) {
+  const type = String(event?.type ?? '').toLowerCase();
+  return type.includes('completed') || type.includes('done');
+}
+
+function streamRejected(responseBody) {
+  const serialized = JSON.stringify(responseBody).toLowerCase();
+  return serialized.includes('stream') && (serialized.includes('unsupported') || serialized.includes('unknown') || serialized.includes('invalid'));
+}
+
+async function readStreamResponse(response) {
+  const reader = response.body?.getReader();
+  if (!reader) return {};
+
+  const decoder = new TextDecoder();
+  const events = [];
+  let buffer = '';
+  let finalImage;
+  let latestImage;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += value ? decoder.decode(value, { stream: !done }) : '';
+    const parsed = parseSseDataChunks(buffer);
+    buffer = parsed.rest;
+
+    for (const data of parsed.chunks) {
+      const event = parseImageStreamEvent(data);
+      if (!event) continue;
+      events.push(event);
+
+      const image = getImageFromStreamEvent(event);
+      if (image) latestImage = image;
+      if (image && isCompletedImageEvent(event)) finalImage = image;
+    }
+
+    if (done) break;
+  }
+
+  const image = finalImage ?? latestImage;
+  return { data: image ? [image.type === 'base64' ? { b64_json: image.value } : { url: image.value }] : [], events };
+}
+
+async function callImageEndpoint(endpoint, apiKey, body, stream) {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(stream ? { ...body, stream: true, partial_images: 3 } : body)
+  });
+
+  const responseBody = stream && response.ok
+    ? await readStreamResponse(response)
+    : await response.json().catch(() => ({}));
+
+  return { response, responseBody };
 }
 
 function getDefaultIndexPath(outputDir) {
@@ -369,19 +464,16 @@ async function generate(args) {
   };
 
   let response;
+  let responseBody;
+  const shouldStream = isGptImageModel(model);
   try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
+    ({ response, responseBody } = await callImageEndpoint(endpoint, apiKey, body, shouldStream));
+    if (shouldStream && ((!response.ok && streamRejected(responseBody)) || (response.ok && !pickImage(responseBody)))) {
+      ({ response, responseBody } = await callImageEndpoint(endpoint, apiKey, body, false));
+    }
   } catch (error) {
     await fail(`图片生成失败：${error.message || error}`);
   }
-  const responseBody = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     const message = responseBody?.error ? JSON.stringify(responseBody.error) : `HTTP ${response.status}`;

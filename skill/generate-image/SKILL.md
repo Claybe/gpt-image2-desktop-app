@@ -1,7 +1,7 @@
 ---
 name: generate-image
 description: Use when the user wants Claude Code to generate images from prompts, use /gi or /gi-setup, configure an OpenAI Images API-compatible endpoint, create placeholder images, delegate generation to a background subagent named painter, pass model parameters, choose output paths, or maintain an image index. If generation is requested before setup, guide the user through /gi-setup instead of failing.
-argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image2] [--output <dir>|--output-file <path>] [--param key=value]"
+argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image-2] [--output <dir>|--output-file <path>] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -14,7 +14,7 @@ argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image2] [--outpu
 
 默认行为：
 
-- 默认模型：`gpt-image2`
+- 默认模型：`gpt-image-2`（兼容旧配置里的 `gpt-image2` / `auto`，helper 会映射为 `gpt-image-2`）
 - 默认尺寸：`auto`（占位图按 `1024x1024` 创建）
 - 默认输出目录：项目目录下 `.claybe/.generate-image/`
 - 默认配置文件：`~/.claude/generate-image/config.json`
@@ -27,7 +27,7 @@ argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image2] [--outpu
 
 1. URL（API Base URL）
 2. API Key
-3. 是否使用默认模型 `gpt-image2`
+3. 是否使用默认模型 `gpt-image-2`
 
 如果用户已提供部分参数，只追问缺失项。也支持直接读取项目 `setting.json`：
 
@@ -44,7 +44,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --use-settings
 或：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model gpt-image2
+node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model gpt-image-2
 ```
 
 `setting.json` 可使用顶层字段 `apiBaseUrl` / `apiKey` / `model`，也支持 `url` / `apikey`，以及嵌套在 `generateImage` 或 `generate-image` 下。
@@ -71,7 +71,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
    - `url` / `apikey`
    - 其他 `key=value` 参数，作为 `--param key=value` 透传
 2. 如果未指定 `size`，使用 `auto`。
-3. 如果未指定 `model`，使用 `gpt-image2`。
+3. 如果未指定 `model`，使用 `gpt-image-2`。
 4. 组织 prompt 时保留用户意图，并补齐资产描述结构：
    - `[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`
 5. 每张图只生成一个主体。不要把多个资产、多个变体或多个主体放在同一张图里；多个资产应分别调用 `/gi`，生成独立贴图。
@@ -91,7 +91,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | --- | --- | --- |
 | `--prompt` | 图片提示词，也可作为位置参数传入 | 必填 |
 | `--size` | `1024x1024`、`1024x1536`、`1536x1024`、`auto` | `auto` |
-| `--model` | 图片模型名称 | `gpt-image2` |
+| `--model` | 图片模型名称 | `gpt-image-2` |
 | `--url` | API base URL 覆盖值 | 初始化配置中的值 |
 | `--apikey` / `--api-key` | API Key 覆盖值 | 初始化配置中的值 |
 | `--output` | 输出目录；如果以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终文件路径 | `./.claybe/.generate-image` |
@@ -122,7 +122,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 Defaults:
 
-- Model: `gpt-image2`
+- Model: `gpt-image-2` (legacy `gpt-image2` / `auto` config values are mapped to `gpt-image-2` by the helper)
 - Size: `auto` (placeholder uses `1024x1024`)
 - Output directory: `.claybe/.generate-image/` under the project directory
 - Config file: `~/.claude/generate-image/config.json`
@@ -135,7 +135,7 @@ Saves API settings. Guide the user step by step for:
 
 1. URL (API Base URL)
 2. API Key
-3. Whether to keep the default model `gpt-image2`
+3. Whether to keep the default model `gpt-image-2`
 
 If the user already provided some values, only ask for the missing ones. The project `setting.json` can also be used:
 
@@ -152,7 +152,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --use-settings
 or:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model gpt-image2
+node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model gpt-image-2
 ```
 
 `setting.json` may contain top-level `apiBaseUrl` / `apiKey` / `model`, aliases `url` / `apikey`, or the same fields under `generateImage` or `generate-image`.
@@ -179,7 +179,7 @@ If configuration is missing, do not only fail. Enter the `/gi-setup` flow and as
    - `url` / `apikey`
    - other `key=value` pairs as passthrough `--param key=value`
 2. Use `auto` when `size` is not specified.
-3. Use `gpt-image2` when `model` is not specified.
+3. Use `gpt-image-2` when `model` is not specified.
 4. Preserve the user's intent while completing this asset prompt structure:
    - `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`
 5. Generate one subject per image. Do not put multiple assets, variants, or subjects into one image; call `/gi` separately for independent textures.
@@ -199,7 +199,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | --- | --- | --- |
 | `--prompt` | Image prompt; can also be positional text | Required |
 | `--size` | `1024x1024`, `1024x1536`, `1536x1024`, or `auto` | `auto` |
-| `--model` | Image model name | `gpt-image2` |
+| `--model` | Image model name | `gpt-image-2` |
 | `--url` | API base URL override | Config value |
 | `--apikey` / `--api-key` | API key override | Config value |
 | `--output` | Output directory; image-extension paths are treated as final file paths | `./.claybe/.generate-image` |
