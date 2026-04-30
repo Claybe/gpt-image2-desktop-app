@@ -96,7 +96,7 @@ const server = new McpServer(
   },
   {
     instructions:
-      '通过项目内 generate-image helper 使用 GPT Image 2 Studio。生成 prompt 时遵循：[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]，每张图只生成一个主体。不要在响应中泄露 API Key。'
+      '通过项目内 generate-image helper 使用 GPT Image 2 Studio。生成 prompt 时遵循：[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]，每张图只生成一个主体。gpt-image* 模型会先尝试流式生成；流式缺少最终图但有中间图时使用最后一张可用图片，流式无图或不受支持时自动回退普通生成。生成中断不能续传，只能重新发起。不要在响应中泄露 API Key。'
   }
 );
 
@@ -126,7 +126,7 @@ server.registerTool(
   'generate_gpt_image2_asset',
   {
     title: 'Generate GPT Image 2 Asset',
-    description: '按 GPT Image 2 Studio 的资产提示词结构生成单主体图片，创建占位图、调用接口、保存图片并更新索引。',
+    description: '按 GPT Image 2 Studio 的资产提示词结构生成单主体图片，创建占位图、调用接口、保存图片并更新索引；流式无最终图时会尽量使用最后一张可用图或回退普通生成。',
     inputSchema: z.object({
       assetType: z.string().describe('资产类型，例如 游戏道具图标、角色立绘、UI 背景'),
       subject: z.string().describe('具体主体；每次只填写一个主体'),
@@ -135,7 +135,8 @@ server.registerTool(
       lightingDetails: z.string().describe('光影细节'),
       backgroundRequirements: z.string().describe('背景要求'),
       prompt: z.string().optional().describe('额外补充要求，会附加到结构化 prompt 后'),
-      size: z.enum(['1024x1024', '1024x1536', '1536x1024', 'auto']).default('auto'),
+      aspectRatio: z.enum(['custom', '16:9', '9:16', '3:2', '4:3', '1:1']).default('custom').describe('出图比例；custom 表示从 prompt 中获取，未获取到则使用 API auto'),
+      resolution: z.enum(['1k', '2k', '4k']).default('1k').describe('清晰度档位'),
       model: z.string().default('gpt-image-2'),
       url: z.string().optional().describe('临时覆盖 API Base URL'),
       apiKey: z.string().optional().describe('临时覆盖 API Key，不会写入项目代码'),
@@ -148,7 +149,15 @@ server.registerTool(
   },
   async (input) => {
     const prompt = buildPrompt(input);
-    const args = ['generate', '--prompt', prompt, '--size', input.size];
+    const args = [
+      'generate',
+      '--prompt',
+      prompt,
+      '--aspect-ratio',
+      input.aspectRatio,
+      '--resolution',
+      input.resolution
+    ];
     appendOptionalArgs(args, {
       model: input.model,
       url: input.url,
@@ -167,10 +176,11 @@ server.registerTool(
   'generate_gpt_image2_from_prompt',
   {
     title: 'Generate GPT Image 2 From Prompt',
-    description: '直接使用完整 prompt 生成图片，同时支持 size、model、output、index 和任意 params。',
+    description: '直接使用完整 prompt 生成图片，同时支持 aspectRatio、resolution、model、output、index 和任意 params；流式无最终图时会尽量使用最后一张可用图或回退普通生成。',
     inputSchema: z.object({
       prompt: z.string().describe('完整图片提示词'),
-      size: z.enum(['1024x1024', '1024x1536', '1536x1024', 'auto']).default('auto'),
+      aspectRatio: z.enum(['custom', '16:9', '9:16', '3:2', '4:3', '1:1']).default('custom').describe('出图比例；custom 表示从 prompt 中获取，未获取到则使用 API auto'),
+      resolution: z.enum(['1k', '2k', '4k']).default('1k').describe('清晰度档位'),
       model: z.string().default('gpt-image-2'),
       url: z.string().optional(),
       apiKey: z.string().optional(),
@@ -181,8 +191,8 @@ server.registerTool(
       params: z.record(z.string(), z.unknown()).default({})
     })
   },
-  async ({ prompt, size, model, url, apiKey, output, outputFile, index, config, params }) => {
-    const args = ['generate', '--prompt', prompt, '--size', size];
+  async ({ prompt, aspectRatio, resolution, model, url, apiKey, output, outputFile, index, config, params }) => {
+    const args = ['generate', '--prompt', prompt, '--aspect-ratio', aspectRatio, '--resolution', resolution];
     appendOptionalArgs(args, { model, url, apikey: apiKey, output, 'output-file': outputFile, index, config });
     appendParams(args, params);
     return helperResult(await runHelper(args));

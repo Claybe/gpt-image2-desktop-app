@@ -1,6 +1,7 @@
 import { ChangeEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AppSettings, GenerateImageProgress, GenerateImageRequest, ImageAsset, ImageSize, MaskMode } from '../../shared.js';
+import type { AppSettings, GenerateImageProgress, GenerateImageRequest, ImageAspectRatio, ImageAsset, ImageResolution, ImageSize, MaskMode } from '../../shared.js';
+import { getImageSize } from '../../shared.js';
 import './styles.css';
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -9,7 +10,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   model: 'gpt-image-2'
 };
 
-const IMAGE_SIZES: ImageSize[] = ['1024x1024', '1024x1536', '1536x1024', 'auto'];
+const IMAGE_ASPECT_RATIOS: ImageAspectRatio[] = ['custom', '16:9', '9:16', '3:2', '4:3', '1:1'];
+const IMAGE_RESOLUTIONS: ImageResolution[] = ['1k', '2k', '4k'];
 const QUEUE_STORAGE_KEY = 'gpt-image2-queue';
 const MAX_QUEUE_STORAGE_CHARS = 5_000_000;
 const MAX_PERSISTED_QUEUE_ITEMS = 50;
@@ -21,6 +23,8 @@ type ImageLoadStatus = 'loading' | 'loaded' | 'failed';
 interface QueueItem {
   id: string;
   prompt: string;
+  aspectRatio: ImageAspectRatio;
+  resolution: ImageResolution;
   size: ImageSize;
   referenceImages: ImageAsset[];
   maskImage?: ImageAsset;
@@ -190,7 +194,9 @@ function normalizeQueueItem(item: Partial<QueueItem>): QueueItem {
   return {
     id: item.id ?? crypto.randomUUID(),
     prompt: item.prompt ?? '',
-    size: item.size ?? '1024x1024',
+    aspectRatio: item.aspectRatio ?? 'custom',
+    resolution: item.resolution ?? '1k',
+    size: item.size ?? getImageSize(item.aspectRatio ?? 'custom', item.resolution ?? '1k', item.prompt ?? ''),
     referenceImages: item.referenceImages ?? [],
     maskImage: item.maskImage,
     maskSourceDataUrl: item.maskSourceDataUrl,
@@ -271,7 +277,8 @@ function App() {
     }
   });
   const [prompt, setPrompt] = useState('');
-  const [size, setSize] = useState<ImageSize>('auto');
+  const [aspectRatio, setAspectRatio] = useState<ImageAspectRatio>('custom');
+  const [resolution, setResolution] = useState<ImageResolution>('1k');
   const [referenceImages, setReferenceImages] = useState<ImageAsset[]>([]);
   const [selectedReferenceIndex, setSelectedReferenceIndex] = useState(0);
   const [brushSize, setBrushSize] = useState(36);
@@ -488,10 +495,13 @@ function App() {
   }
 
   async function snapshotQueueItem(): Promise<QueueItem> {
+    const selectedSize = getImageSize(aspectRatio, resolution, prompt);
     return {
       id: crypto.randomUUID(),
       prompt,
-      size,
+      aspectRatio,
+      resolution,
+      size: selectedSize,
       referenceImages: [...referenceImages],
       maskImage: maskDataUrl ? await createMaskAsset(maskDataUrl, maskMode) : undefined,
       maskSourceDataUrl: maskDataUrl,
@@ -514,6 +524,8 @@ function App() {
       itemId: item.id,
       settings,
       prompt: item.prompt,
+      aspectRatio: item.aspectRatio,
+      resolution: item.resolution,
       size: item.size,
       referenceImages: item.referenceImages ?? [],
       maskImage: item.maskImage,
@@ -994,7 +1006,10 @@ function App() {
           <label>API Key<input type="password" value={settings.apiKey} onChange={(event) => setSettings({ ...settings, apiKey: event.target.value })} placeholder="sk-..." /></label>
           <label>Model<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
         </details>
-        <label>图片尺寸<select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>{IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}</select></label>
+        <div className="size-controls">
+          <label>出图比例<select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as ImageAspectRatio)}>{IMAGE_ASPECT_RATIOS.map((value) => <option key={value} value={value}>{value === 'custom' ? '自定义（从提示词获取）' : value}</option>)}</select></label>
+          <label>清晰度<select value={resolution} onChange={(event) => setResolution(event.target.value as ImageResolution)}>{IMAGE_RESOLUTIONS.map((value) => <option key={value}>{value}</option>)}</select></label>
+        </div>
         <label>生成提示词<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." /></label>
         <div className="timer-card">生成中 <strong>{generatingCount}</strong></div>
 

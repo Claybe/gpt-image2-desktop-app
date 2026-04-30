@@ -39,6 +39,8 @@ function createSafeRequestLog(request: GenerateImageRequest, endpoint: string, s
   return {
     endpointPath: new URL(endpoint).pathname,
     model: request.settings.model,
+    aspectRatio: request.aspectRatio,
+    resolution: request.resolution,
     size: request.size,
     stream,
     referenceImageCount: request.referenceImages.length,
@@ -305,6 +307,7 @@ async function readStreamGenerateResponse(event: Electron.IpcMainInvokeEvent, it
   let partialImageCount = 0;
   let streamByteCount = 0;
   let finalImageSource: { imageSource: string; sourceType: 'dataUrl' | 'url' } | undefined;
+  let latestImageSource: { imageSource: string; sourceType: 'dataUrl' | 'url' } | undefined;
 
   void writeImageDiagnosticLog(itemId, 'generate.stream.start', {
     status: result.response.status,
@@ -334,6 +337,12 @@ async function readStreamGenerateResponse(event: Electron.IpcMainInvokeEvent, it
       events.push(streamEvent);
       const eventType = String((streamEvent as { type?: string }).type ?? 'unknown');
       const imageSource = getImageDataUrlFromEvent(streamEvent);
+      if (imageSource) {
+        latestImageSource = {
+          imageSource,
+          sourceType: imageSource.startsWith('data:') ? 'dataUrl' : 'url'
+        };
+      }
       const elapsedMs = Date.now() - result.startedAt;
       void writeImageDiagnosticLog(itemId, 'generate.stream.event', {
         eventType,
@@ -399,9 +408,29 @@ async function readStreamGenerateResponse(event: Electron.IpcMainInvokeEvent, it
     hasFinalImage: Boolean(finalImageSource)
   });
 
+  const imageSourceForResponse = finalImageSource ?? latestImageSource;
+  if (!finalImageSource && latestImageSource) {
+    void writeImageDiagnosticLog(itemId, 'generate.stream.latest_stream_image_not_completed_fallback', {
+      totalMs: jsonParsedAt - result.startedAt,
+      eventCount: events.length,
+      partialImageCount,
+      streamByteCount,
+      fallbackSource: 'latest_stream_image_not_completed',
+      imageSourceType: latestImageSource.sourceType
+    });
+    emitGenerationProgress(event, {
+      itemId,
+      type: 'fallback',
+      message: `未收到最终完成图片，已使用最后一张流式中间/草稿图片 · ${((jsonParsedAt - result.startedAt) / 1000).toFixed(1)} 秒`,
+      elapsedMs: jsonParsedAt - result.startedAt,
+      streamBytes: streamByteCount,
+      imageDataUrl: latestImageSource.imageSource
+    });
+  }
+
   return {
     response: result.response,
-    responseBody: { data: finalImageSource ? [{ b64_json: finalImageSource.sourceType === 'dataUrl' ? finalImageSource.imageSource.split(',')[1] : undefined, url: finalImageSource.sourceType === 'url' ? finalImageSource.imageSource : undefined }] : [], events },
+    responseBody: { data: imageSourceForResponse ? [{ b64_json: imageSourceForResponse.sourceType === 'dataUrl' ? imageSourceForResponse.imageSource.split(',')[1] : undefined, url: imageSourceForResponse.sourceType === 'url' ? imageSourceForResponse.imageSource : undefined }] : [], events, streamFallbackReason: finalImageSource ? undefined : latestImageSource ? 'latest_stream_image_not_completed' : 'no_image' },
     timings: createGenerationTimings(result.requestStartedAt, result.startedAt, result.responseReceivedAt, jsonParsedAt, false, false)
   };
 }
@@ -455,8 +484,14 @@ ipcMain.handle('image:generate', async (event, request: GenerateImageRequest): P
     ? await readStreamGenerateResponse(event, itemId, generationResult)
     : await readJsonGenerateResponse(itemId, generationResult, false);
 
-  if (shouldStream && !parsedResult.response.ok && streamRejected(parsedResult.responseBody)) {
-    emitGenerationProgress(event, { itemId, type: 'fallback', message: '当前接口不支持流式生成，已回退普通生成' });
+  if (shouldStream && ((!parsedResult.response.ok && streamRejected(parsedResult.responseBody)) || (parsedResult.response.ok && !pickImageSource(parsedResult.responseBody)))) {
+    const reason = parsedResult.response.ok ? '流式响应未包含可用图片，已回退普通生成' : '当前接口不支持流式生成，已回退普通生成';
+    emitGenerationProgress(event, { itemId, type: 'fallback', message: reason });
+    void writeImageDiagnosticLog(itemId, 'generate.handle.stream_fallback', {
+      reason,
+      status: parsedResult.response.status,
+      hadImage: Boolean(pickImageSource(parsedResult.responseBody))
+    });
     generationResult = await callGenerateImageEndpoint(endpoint, request, apiKey, false);
     parsedResult = await readJsonGenerateResponse(itemId, generationResult, true);
   }
@@ -477,8 +512,12 @@ ipcMain.handle('image:generate', async (event, request: GenerateImageRequest): P
 
   const imageSource = pickImageSource(responseBody);
   if (!imageSource) {
-    void writeImageDiagnosticLog(itemId, 'generate.handle.no_image', { totalMs: timings.totalMs });
-    throw new Error('图片生成失败：响应中没有可用图片数据');
+    const body = responseBody as { events?: unknown[] };
+    void writeImageDiagnosticLog(itemId, 'generate.handle.no_image', {
+      totalMs: timings.totalMs,
+      eventCount: body.events?.length ?? 0
+    });
+    throw new Error('图片生成失败：响应中没有可用图片数据。可能是流式响应未返回最终图、代理返回空 data，或连接在最终图片事件前中断。');
   }
 
   if (imageSource.sourceType === 'url') {
@@ -487,6 +526,7 @@ ipcMain.handle('image:generate', async (event, request: GenerateImageRequest): P
 
   void writeImageDiagnosticLog(itemId, 'generate.handle.success', {
     imageSourceType: imageSource.sourceType,
+    streamFallbackReason: (responseBody as { streamFallbackReason?: string }).streamFallbackReason,
     totalMs: timings.totalMs,
     responseReceivedMs: timings.responseReceivedMs,
     parseOrStreamMs: timings.jsonParsedMs,

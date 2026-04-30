@@ -1,5 +1,33 @@
-export type ImageSize = '1024x1024' | '1024x1536' | '1536x1024' | 'auto';
+export type ImageAspectRatio = 'custom' | '16:9' | '9:16' | '3:2' | '4:3' | '1:1';
+export type ImageResolution = '1k' | '2k' | '4k';
+export type ImageSize = 'auto' | `${number}x${number}`;
 export type MaskMode = 'alpha' | 'gray' | 'invert-gray';
+
+const IMAGE_ASPECT_RATIO_RE = /(?:比例|出图比例|画幅|aspect[- ]?ratio|ratio)?\s*(16[:：]9|9[:：]16|3[:：]2|4[:：]3|1[:：]1)/i;
+
+export function inferImageAspectRatio(prompt: string): Exclude<ImageAspectRatio, 'custom'> | undefined {
+  const match = IMAGE_ASPECT_RATIO_RE.exec(prompt);
+  return match?.[1]?.replace('：', ':') as Exclude<ImageAspectRatio, 'custom'> | undefined;
+}
+
+export function getImageSize(aspectRatio: ImageAspectRatio, resolution: ImageResolution, prompt = ''): ImageSize {
+  const resolvedAspectRatio = aspectRatio === 'custom' ? inferImageAspectRatio(prompt) : aspectRatio;
+  if (!resolvedAspectRatio) {
+    return 'auto';
+  }
+
+  const base = resolution === '4k' ? 4096 : resolution === '2k' ? 2048 : 1024;
+  const [widthRatio, heightRatio] = resolvedAspectRatio.split(':').map(Number);
+  if (widthRatio === heightRatio) {
+    return `${base}x${base}`;
+  }
+
+  if (widthRatio > heightRatio) {
+    return `${Math.round(base * (widthRatio / heightRatio))}x${base}`;
+  }
+
+  return `${base}x${Math.round(base * (heightRatio / widthRatio))}`;
+}
 
 export interface AppSettings {
   apiBaseUrl: string;
@@ -17,6 +45,8 @@ export interface GenerateImageRequest {
   itemId?: string;
   settings: AppSettings;
   prompt: string;
+  aspectRatio: ImageAspectRatio;
+  resolution: ImageResolution;
   size: ImageSize;
   referenceImages: ImageAsset[];
   maskImage?: ImageAsset;

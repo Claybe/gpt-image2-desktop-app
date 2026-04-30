@@ -10,7 +10,8 @@ const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.claude', 'generate-image',
 const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), '.claybe', '.generate-image');
 const DEFAULT_SETTINGS_PATH = path.join(process.cwd(), 'setting.json');
 const DEFAULT_MODEL = 'gpt-image-2';
-const SIZE_RE = /^(\d+)x(\d+)$/;
+const ASPECT_RATIOS = ['custom', '16:9', '9:16', '3:2', '4:3', '1:1'];
+const RESOLUTIONS = ['1k', '2k', '4k'];
 
 function usage() {
   return `generate-image helper
@@ -18,12 +19,12 @@ function usage() {
 Commands:
   setup --url <api-base-url> --apikey <api-key> [--model <model>] [--config <path>]
   setup --use-settings [--settings <path>] [--model <model>] [--config <path>]
-  generate --prompt <text> [--size 1024x1024|1024x1536|1536x1024|auto] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
+  generate --prompt <text> [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--resolution 1k|2k|4k] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
 
 Examples:
   node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-... --model gpt-image-2
   node scripts/generate-image.mjs setup --use-settings
-  node scripts/generate-image.mjs generate --prompt "a glass dragon" --size auto --param quality=high
+  node scripts/generate-image.mjs generate --prompt "a glass dragon, 1:1" --resolution 1k --param quality=high
 `;
 }
 
@@ -92,17 +93,41 @@ function normalizeBaseUrl(url) {
   return url.replace(/\/$/, '');
 }
 
-function normalizeSize(size) {
-  if (!size || size === 'auto') {
-    return { apiSize: size || '1024x1024', width: 1024, height: 1024 };
+function normalizeAspectRatio(aspectRatio) {
+  const normalized = String(aspectRatio || 'custom').replace('：', ':').toLowerCase();
+  if (!ASPECT_RATIOS.includes(normalized)) {
+    throw new Error(`aspect-ratio 必须是 custom、16:9、9:16、3:2、4:3 或 1:1，当前为：${aspectRatio}`);
   }
+  return normalized;
+}
 
-  const match = SIZE_RE.exec(size);
-  if (!match) {
-    throw new Error(`size 必须是 1024x1024、1024x1536、1536x1024 或 auto，当前为：${size}`);
+function normalizeResolution(resolution) {
+  const normalized = String(resolution || '1k').toLowerCase();
+  if (!RESOLUTIONS.includes(normalized)) {
+    throw new Error(`resolution 必须是 1k、2k 或 4k，当前为：${resolution}`);
   }
+  return normalized;
+}
 
-  return { apiSize: size, width: Number(match[1]), height: Number(match[2]) };
+function getImageSize(aspectRatio, resolution) {
+  if (aspectRatio === 'custom') return { apiSize: 'auto', width: 1024, height: 1024 };
+  const base = resolution === '4k' ? 4096 : resolution === '2k' ? 2048 : 1024;
+  const [widthRatio, heightRatio] = aspectRatio.split(':').map(Number);
+  if (widthRatio === heightRatio) return { apiSize: `${base}x${base}`, width: base, height: base };
+  if (widthRatio > heightRatio) return { apiSize: `${Math.round(base * (widthRatio / heightRatio))}x${base}`, width: Math.round(base * (widthRatio / heightRatio)), height: base };
+  return { apiSize: `${base}x${Math.round(base * (heightRatio / widthRatio))}`, width: base, height: Math.round(base * (heightRatio / widthRatio)) };
+}
+
+function inferAspectRatioFromPrompt(prompt) {
+  const match = /(?:比例|出图比例|画幅|aspect[- ]?ratio|ratio)?\s*(16[:：]9|9[:：]16|3[:：]2|4[:：]3|1[:：]1)/i.exec(prompt);
+  return match?.[1]?.replace('：', ':');
+}
+
+function normalizeSize(aspectRatioValue, resolutionValue, prompt = '') {
+  const aspectRatio = normalizeAspectRatio(aspectRatioValue);
+  const resolution = normalizeResolution(resolutionValue);
+  const resolvedAspectRatio = aspectRatio === 'custom' ? inferAspectRatioFromPrompt(prompt) || 'custom' : aspectRatio;
+  return { ...getImageSize(resolvedAspectRatio, resolution), aspectRatio: resolvedAspectRatio, resolution };
 }
 
 function resolveOutputPaths(outputValue, outputFileValue) {
@@ -274,7 +299,7 @@ function streamRejected(responseBody) {
 
 async function readStreamResponse(response) {
   const reader = response.body?.getReader();
-  if (!reader) return {};
+  if (!reader) return { data: [], events: [], streamFallbackReason: 'no_reader' };
 
   const decoder = new TextDecoder();
   const events = [];
@@ -302,7 +327,8 @@ async function readStreamResponse(response) {
   }
 
   const image = finalImage ?? latestImage;
-  return { data: image ? [image.type === 'base64' ? { b64_json: image.value } : { url: image.value }] : [], events };
+  const streamFallbackReason = finalImage ? undefined : latestImage ? 'latest_stream_image_not_completed' : 'no_image';
+  return { data: image ? [image.type === 'base64' ? { b64_json: image.value } : { url: image.value }] : [], events, streamFallbackReason };
 }
 
 async function callImageEndpoint(endpoint, apiKey, body, stream) {
@@ -416,7 +442,8 @@ async function setup(args) {
 function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
   const extracted = {
     prompt: rawPrompt,
-    size: undefined,
+    aspectRatio: undefined,
+    resolution: undefined,
     model: undefined,
     url: undefined,
     apiKey: undefined,
@@ -431,8 +458,10 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
     const normalizedKey = key.toLowerCase();
     const cleanedValue = value.replace(/^['"]|['"]$/g, '');
 
-    if (normalizedKey === 'size' && !explicitParams.size) {
-      extracted.size = cleanedValue;
+    if ((normalizedKey === 'aspect-ratio' || normalizedKey === 'aspectratio' || normalizedKey === 'ratio' || normalizedKey === '比例') && !explicitParams['aspect-ratio'] && !explicitParams.aspectRatio) {
+      extracted.aspectRatio = cleanedValue;
+    } else if ((normalizedKey === 'resolution' || normalizedKey === '清晰度' || normalizedKey === '档位') && !explicitParams.resolution) {
+      extracted.resolution = cleanedValue;
     } else if (normalizedKey === 'model' && !explicitParams.model) {
       extracted.model = cleanedValue;
     } else if ((normalizedKey === 'url' || normalizedKey === 'api-base-url') && !explicitParams.url) {
@@ -452,11 +481,19 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
     return prefix;
   });
 
-  if (!explicitParams.size) {
-    const sizeMatch = /(?:尺寸|size)?\s*(1024x1024|1024x1536|1536x1024|auto)/i.exec(extracted.prompt);
-    if (sizeMatch) {
-      extracted.size = sizeMatch[1];
-      extracted.prompt = extracted.prompt.replace(sizeMatch[0], ' ');
+  if (!explicitParams['aspect-ratio'] && !explicitParams.aspectRatio) {
+    const aspectRatioMatch = /(?:比例|出图比例|画幅|aspect[- ]?ratio|ratio)?\s*(16[:：]9|9[:：]16|3[:：]2|4[:：]3|1[:：]1)/i.exec(extracted.prompt);
+    if (aspectRatioMatch) {
+      extracted.aspectRatio = aspectRatioMatch[1].replace('：', ':');
+      extracted.prompt = extracted.prompt.replace(aspectRatioMatch[0], ' ');
+    }
+  }
+
+  if (!explicitParams.resolution) {
+    const resolutionMatch = /(?:清晰度|分辨率|档位|resolution)?\s*([124]k)/i.exec(extracted.prompt);
+    if (resolutionMatch) {
+      extracted.resolution = resolutionMatch[1].toLowerCase();
+      extracted.prompt = extracted.prompt.replace(resolutionMatch[0], ' ');
     }
   }
 
@@ -492,7 +529,8 @@ async function generate(args) {
   assertConfigured(configPath, candidateApiBaseUrl, apiKey);
   const apiBaseUrl = normalizeBaseUrl(candidateApiBaseUrl);
 
-  const size = normalizeSize(args.size || naturalOptions.size || 'auto');
+  const requestedAspectRatio = args['aspect-ratio'] || args.aspectRatio || naturalOptions.aspectRatio;
+  const size = normalizeSize(requestedAspectRatio, args.resolution || naturalOptions.resolution, rawPrompt);
   const model = normalizeModel(args.model || naturalOptions.model || config.model);
   const output = resolveOutputPaths(args.output || naturalOptions.output, args['output-file'] || naturalOptions.outputFile);
   const generatedPath = output.generatedPath || getDefaultGeneratedPath(output.outputDir, prompt);
@@ -515,6 +553,8 @@ async function generate(args) {
     prompt,
     placeholderPath,
     model,
+    aspectRatio: size.aspectRatio,
+    resolution: size.resolution,
     size: size.apiSize,
     params,
     endpoint,
@@ -536,7 +576,11 @@ async function generate(args) {
   try {
     ({ response, responseBody } = await callImageEndpoint(endpoint, apiKey, body, shouldStream));
     if (shouldStream && ((!response.ok && streamRejected(responseBody)) || (response.ok && !pickImage(responseBody)))) {
+      const reason = response.ok ? '流式响应未包含可用图片，回退普通生成。' : '当前接口不支持流式生成，回退普通生成。';
+      console.warn(reason);
       ({ response, responseBody } = await callImageEndpoint(endpoint, apiKey, body, false));
+    } else if (responseBody?.streamFallbackReason === 'latest_stream_image_not_completed') {
+      console.warn('流式响应未返回最终完成图片，已使用最后一张流式中间/草稿图片。');
     }
   } catch (error) {
     await fail(`图片生成失败：${error.message || error}`);
@@ -549,7 +593,8 @@ async function generate(args) {
 
   const image = pickImage(responseBody);
   if (!image) {
-    await fail('图片生成失败：响应中没有 b64_json 或 url。');
+    const eventCount = responseBody?.events?.length ?? 0;
+    await fail(`图片生成失败：响应中没有 b64_json 或 url。可能是流式响应未返回最终图、代理返回空 data，或连接在最终图片事件前中断。已记录事件数：${eventCount}`);
   }
 
   try {
@@ -561,13 +606,14 @@ async function generate(args) {
     ...baseIndexEntry,
     generatedPath,
     result: 'success',
+    streamFallbackReason: responseBody?.streamFallbackReason,
     completedAt: new Date().toISOString()
   };
   await updateImageIndex(indexPath, indexEntry);
   console.log(`图片生成完成并已覆盖占位图：${generatedPath}`);
   console.log(`索引已更新：${indexPath}`);
   console.log(`耗时：${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`);
-  console.log(JSON.stringify({ placeholderPath, generatedPath, indexPath, endpoint, model, size: size.apiSize }, null, 2));
+  console.log(JSON.stringify({ placeholderPath, generatedPath, indexPath, endpoint, model, aspectRatio: size.aspectRatio, resolution: size.resolution, size: size.apiSize }, null, 2));
 }
 
 async function main() {

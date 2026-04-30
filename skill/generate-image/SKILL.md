@@ -1,7 +1,7 @@
 ---
 name: generate-image
 description: Use when the user wants Claude Code to generate images from prompts, use /gi or /gi-setup, configure an OpenAI Images API-compatible endpoint, create placeholder images, delegate generation to a background subagent named painter, pass model parameters, choose output paths, or maintain an image index. If generation is requested before setup, guide the user through /gi-setup instead of failing.
-argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image-2] [--output <dir>|--output-file <path>] [--param key=value]"
+argument-hint: "/gi-setup | <prompt> [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--resolution 1k|2k|4k] [--model gpt-image-2] [--output <dir>|--output-file <path>] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -15,7 +15,8 @@ argument-hint: "/gi-setup | <prompt> [--size auto] [--model gpt-image-2] [--outp
 默认行为：
 
 - 默认模型：`gpt-image-2`（兼容旧配置里的 `gpt-image2` / `auto`，helper 会映射为 `gpt-image-2`）
-- 默认尺寸：`auto`（占位图按 `1024x1024` 创建）
+- 默认出图比例：`custom`（从提示词获取；未获取到则使用 API `auto`）
+- 默认清晰度：`1k`（指定明确比例时会换算为实际 API `size`）
 - 默认输出目录：项目目录下 `.claybe/.generate-image/`
 - 默认配置文件：`~/.claude/generate-image/config.json`
 
@@ -54,7 +55,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 用于生成图片。支持 CLI 风格参数，也支持从自然语言中提取参数：
 
 ```text
-/gi 一张赛博朋克风格的上海夜景，尺寸 1536x1024，quality=high output-file=./.claybe/.generate-image/shanghai.png
+/gi 一张赛博朋克风格的上海夜景，出图比例 3:2，清晰度 1k，quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 当配置缺失时，不要只报错；进入 `/gi-setup` 引导用户配置 URL/API Key，或询问是否使用项目 `setting.json`。
@@ -63,26 +64,27 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 
 1. 从 `/gi` 输入中提取：
    - `prompt`
-   - `size`
+   - `aspect-ratio` / `ratio` / `比例`
+   - `resolution` / `清晰度` / `档位`
    - `model`
    - `output`
    - `output-file`
    - `index`
    - `url` / `apikey`
    - 其他 `key=value` 参数，作为 `--param key=value` 透传
-2. 如果未指定 `size`，使用 `auto`。
+2. 如果未指定出图比例，使用 `custom`：优先从提示词提取 `16:9`、`9:16`、`3:2`、`4:3`、`1:1`；如果提示词没有比例，则使用 API `auto`。如果未指定清晰度，使用 `1k`。
 3. 如果未指定 `model`，使用 `gpt-image-2`。
 4. 组织 prompt 时保留用户意图，并补齐资产描述结构：
    - `[资产名称/用途] + [资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`
 5. 每张图只生成一个主体。不要把多个资产、多个变体或多个主体放在同一张图里；多个资产应分别调用 `/gi`，生成独立贴图。
-6. 生成时启动名为 `painter` 的后台 subagent，让它运行 helper 的 `generate` 命令。helper 会创建占位图、调用 API、保存最终图并更新索引。
+6. 生成时启动名为 `painter` 的后台 subagent，让它运行 helper 的 `generate` 命令。helper 会创建占位图、调用 API、保存最终图并更新索引。`gpt-image*` 模型默认先尝试流式生成：如果流式响应没有最终完成图但包含草稿/中间图，会使用最后一张可用图片；如果流式响应完全没有图片或接口拒绝 stream，会自动回退一次普通非流式生成。
 7. `painter` 完成后，报告生成图路径、占位图路径和索引路径。
-8. 如果失败，报告明确错误，并说明占位图已保留。
+8. 如果失败，报告明确错误，并说明占位图已保留。响应中没有图片数据通常表示接口/代理返回空 `data`、流式事件缺少可用图片，或连接在最终图片事件前中断；生成请求本身不能续传，只能重新发起。
 
 helper 调用格式：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
+node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> --resolution <1k|2k|4k> [other args]
 ```
 
 ### 参数表
@@ -90,7 +92,8 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | 参数 | 说明 | 默认值 |
 | --- | --- | --- |
 | `--prompt` | 图片提示词，也可作为位置参数传入 | 必填 |
-| `--size` | `1024x1024`、`1024x1536`、`1536x1024`、`auto` | `auto` |
+| `--aspect-ratio` | 出图比例：`custom`、`16:9`、`9:16`、`3:2`、`4:3`、`1:1`。`custom` 会从提示词获取，未获取到则使用 API `auto` | `custom` |
+| `--resolution` | 清晰度档位：`1k`、`2k`、`4k` | `1k` |
 | `--model` | 图片模型名称 | `gpt-image-2` |
 | `--url` | API base URL 覆盖值 | 初始化配置中的值 |
 | `--apikey` / `--api-key` | API Key 覆盖值 | 初始化配置中的值 |
@@ -123,7 +126,8 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 Defaults:
 
 - Model: `gpt-image-2` (legacy `gpt-image2` / `auto` config values are mapped to `gpt-image-2` by the helper)
-- Size: `auto` (placeholder uses `1024x1024`)
+- Aspect ratio: `custom` (extract from the prompt; if none is found, API `auto` is used)
+- Resolution tier: `1k` (converted to the actual API `size` when a concrete ratio is available)
 - Output directory: `.claybe/.generate-image/` under the project directory
 - Config file: `~/.claude/generate-image/config.json`
 
@@ -162,7 +166,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 Generates an image. It accepts CLI-style parameters and can also extract parameters from natural language:
 
 ```text
-/gi a cyberpunk night view of Shanghai, size 1536x1024, quality=high output-file=./.claybe/.generate-image/shanghai.png
+/gi a cyberpunk night view of Shanghai, aspect-ratio 3:2, resolution 1k, quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 If configuration is missing, do not only fail. Enter the `/gi-setup` flow and ask for URL/API Key, or ask whether to use the project `setting.json`.
@@ -171,26 +175,27 @@ If configuration is missing, do not only fail. Enter the `/gi-setup` flow and as
 
 1. Extract from `/gi` input:
    - `prompt`
-   - `size`
+   - `aspect-ratio` / `ratio` / `比例`
+   - `resolution` / `清晰度` / `档位`
    - `model`
    - `output`
    - `output-file`
    - `index`
    - `url` / `apikey`
    - other `key=value` pairs as passthrough `--param key=value`
-2. Use `auto` when `size` is not specified.
+2. Use `custom` when aspect ratio is not specified: extract `16:9`, `9:16`, `3:2`, `4:3`, or `1:1` from the prompt first; if no ratio is found, use API `auto`. Use `1k` when resolution tier is not specified.
 3. Use `gpt-image-2` when `model` is not specified.
 4. Preserve the user's intent while completing this asset prompt structure:
    - `[asset name/purpose] + [asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`
 5. Generate one subject per image. Do not put multiple assets, variants, or subjects into one image; call `/gi` separately for independent textures.
-6. Start a background subagent named `painter` and have it run the helper `generate` command. The helper creates the placeholder, calls the API, saves the final image, and updates the index.
+6. Start a background subagent named `painter` and have it run the helper `generate` command. The helper creates the placeholder, calls the API, saves the final image, and updates the index. `gpt-image*` models try streaming first by default: if the stream has no final completed image but includes draft/intermediate image data, the helper uses the latest available image; if the stream contains no image at all or the endpoint rejects streaming, it automatically retries once without streaming.
 7. When `painter` finishes, report the generated image path, placeholder path, and index path.
-8. On failure, report the clear error and mention that the placeholder remains available.
+8. On failure, report the clear error and mention that the placeholder remains available. No image data in the response usually means the endpoint/proxy returned empty `data`, stream events had no usable image, or the connection ended before the final image event; the generation request itself cannot be resumed and must be started again.
 
 Helper command format:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
+node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> --resolution <1k|2k|4k> [other args]
 ```
 
 ### Parameters
@@ -198,7 +203,8 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | Parameter | Meaning | Default |
 | --- | --- | --- |
 | `--prompt` | Image prompt; can also be positional text | Required |
-| `--size` | `1024x1024`, `1024x1536`, `1536x1024`, or `auto` | `auto` |
+| `--aspect-ratio` | Aspect ratio: `custom`, `16:9`, `9:16`, `3:2`, `4:3`, or `1:1`. `custom` extracts the ratio from the prompt; if none is found, API `auto` is used | `custom` |
+| `--resolution` | Resolution tier: `1k`, `2k`, or `4k` | `1k` |
 | `--model` | Image model name | `gpt-image-2` |
 | `--url` | API base URL override | Config value |
 | `--apikey` / `--api-key` | API key override | Config value |
