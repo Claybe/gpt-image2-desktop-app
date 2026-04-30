@@ -93,7 +93,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### 提示词结构要求
 
-Agent 使用 `/gi` 生成图片时，prompt 需要明确包含：`[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`。如果用户只提供简短描述，先在不改变用户意图的前提下补全这些要素。
+Agent 使用 `/gi` 生成图片时，prompt 需要明确包含：`[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`。如果用户只提供简短描述，先在不改变用户意图的前提下补全这些要素。禁止在同一张图片中生成多个主体；每个资产必须生成在独立贴图中。
 
 示例：
 
@@ -230,7 +230,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Prompt structure requirements
 
-When an agent uses `/gi` to generate an image, the prompt should explicitly include: `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`. If the user only provides a short description, enrich it with these elements without changing the user's intent.
+When an agent uses `/gi` to generate an image, the prompt should explicitly include: `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`. If the user only provides a short description, enrich it with these elements without changing the user's intent. Do not generate multiple subjects in the same image; each asset must be generated as its own independent texture.
 
 Example:
 

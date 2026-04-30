@@ -131,14 +131,14 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
    4. “也可以直接使用项目 setting.json 里的 URL 和 Key 吗？”如果用户选择是，运行 `node skill/generate-image/scripts/generate-image.mjs setup --use-settings`。
    然后用收集到的信息运行 helper。
 3. 如果用户没有明确尺寸，默认使用 `auto`。
-4. 组织或改写 prompt 时，需要明确包含这些资产描述要素：`[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`。如果用户只给了简短描述，先在不改变用户意图的前提下补全这些要素，再传给 helper。
+4. 组织或改写 prompt 时，需要明确包含这些资产描述要素：`[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`。如果用户只给了简短描述，先在不改变用户意图的前提下补全这些要素。禁止在同一张图片中生成多个主体；每个资产必须生成在独立贴图中，再传给 helper。
 5. 创建占位图后，不要在主流程里等待图片生成；启动后台 subagent：
    - 名字必须是 `painter`。
    - 任务内容是运行 helper 的 `generate` 命令并保存最终图。
    - 把 prompt、size、model、output / output-file、index、url/apikey 覆盖值和所有 `--param` 原样传给 helper。
-5. `painter` 完成后，用它返回的生成图片路径作为最终结果；向用户报告生成图路径和占位图路径。
-6. 如果 `painter` 失败，报告错误信息，并说明占位图已保留。
-7. helper 调用格式：
+6. `painter` 完成后，用它返回的生成图片路径作为最终结果；向用户报告生成图路径和占位图路径。
+7. 如果 `painter` 失败，报告错误信息，并说明占位图已保留。
+8. helper 调用格式：
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
@@ -311,14 +311,14 @@ For `/gi`:
    4. “Do you want to use URL and Key from the project setting.json?” If yes, run `node skill/generate-image/scripts/generate-image.mjs setup --use-settings`.
    Then run the helper with the collected values.
 3. Default to `auto` when size is not specified.
-4. When composing or rewriting the prompt, include these asset description elements explicitly: `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`. If the user only gives a short description, enrich it with these elements without changing the user's intent before passing it to the helper.
+4. When composing or rewriting the prompt, include these asset description elements explicitly: `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`. If the user only gives a short description, enrich it with these elements without changing the user's intent. Do not generate multiple subjects in the same image; each asset must be generated as its own independent texture before passing the prompt to the helper.
 5. After creating the placeholder, do not wait for image generation in the main flow; launch a background subagent:
    - Its name must be `painter`.
    - Its task is to run the helper `generate` command and save the final image.
    - Pass prompt, size, model, output / output-file, index, url/apikey overrides, and all `--param` values through unchanged.
-5. When `painter` finishes, use its generated image path as the final result; report both the generated image path and placeholder path.
-6. If `painter` fails, report the error and mention that the placeholder remains available.
-7. Helper command format:
+6. When `painter` finishes, use its generated image path as the final result; report both the generated image path and placeholder path.
+7. If `painter` fails, report the error and mention that the placeholder remains available.
+8. Helper command format:
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
