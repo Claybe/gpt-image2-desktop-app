@@ -1,7 +1,7 @@
 ---
 name: generate-image
-description: Use when the user wants Claude Code to set up an image generation API with /generate-image:steup, generate images from prompts, pass image model parameters, create same-resolution placeholders before generation, or use slash commands /generate-image and /generate-image:steup. If generation is requested before setup, automatically run the steup flow and guide the user step by step.
-argument-hint: "steup --url <url> --apikey <key> | <prompt> [--size 1024x1024] [--model gpt-image-2] [--param key=value]"
+description: Use when the user wants Claude Code to generate images from prompts, create same-resolution placeholders, run image generation in a background subagent named painter, pass image model parameters, choose an output directory or output file path, or use slash commands /generate-image and /setup. If generation is requested before setup, automatically run the /setup flow and guide the user step by step by asking for URL, key, and optional defaults.
+argument-hint: "/setup | <prompt> [--size auto] [--model auto] [--output <dir>|--output-file <path>] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -10,22 +10,25 @@ argument-hint: "steup --url <url> --apikey <key> | <prompt> [--size 1024x1024] [
 
 ### 功能概述
 
-`generate-image` 用于在 Claude Code 中通过 slash skill 调用图片生成接口。它复刻当前桌面应用的核心生成链路：读取 URL/API Key/model 配置，接收提示词和参数，先生成一张与目标尺寸一致的占位图，再调用兼容 OpenAI Images API 风格的图片生成接口，最后把生成图片保存到本地。
+`generate-image` 用于在 Claude Code 中通过 slash skill 生成图片。流程保持简化：接收 prompt 和参数，先生成一张与目标尺寸一致的占位图，再通过名为 `painter` 的后台 subagent 执行图片生成，拿到最终结果后用生成图替换占位图路径。
 
 ### Slash skill
 
 本技能提供两个入口：
 
-1. `/generate-image:steup`
+1. `/setup`
    - 初始化 API 配置。
-   - 必须设置 `url` 和 `apikey`。
-   - 可选设置默认 `model`。
+   - 运行后按步骤询问：请输入你的 URL、请输入你的 Key、是否使用默认参数 `auto`。
+   - 用户提供后调用 helper 保存配置。
+   - 默认 `model` 为 `auto`。
 
 2. `/generate-image`
    - 根据提示词生成图片。
    - 如果还没有初始化，会自动进入初始化引导，提示用户配置 `url` 和 `apikey`。
    - 参数可以写在 slash 命令后面，也可以写在自然语言提示词里。
    - 调用时会先创建同分辨率占位图。
+   - 图片生成通过名为 `painter` 的后台 subagent 执行。
+   - 支持指定输出目录或最终图片文件路径。
    - 如果生成失败，明确提示失败原因，并保留占位图路径。
 
 ### npx skills 安装
@@ -49,10 +52,10 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 使用 helper 脚本保存配置：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup \
+node skill/generate-image/scripts/generate-image.mjs setup \
   --url https://api.example.com/v1 \
   --apikey sk-your-key \
-  --model gpt-image-2
+  --model auto
 ```
 
 配置默认保存到：
@@ -92,14 +95,20 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Agent 执行规则
 
-当用户使用 `/generate-image:steup` 时：
+简化执行链路：输入 prompt → 生成占位图 → 后台运行 `painter` subagent → 拿到最终结果后报告生成图路径，用最终结果替换占位图。
 
-1. 从用户输入提取 `url`、`apikey`、可选 `model`。
-2. 如果缺少 `url` 或 `apikey`，提示用户补齐。
-3. 调用：
+当用户使用 `/setup` 时：
+
+1. 不要要求用户一次性写完整命令；按顺序询问并收集：
+   1. “请输入你的 URL（API Base URL）”
+   2. “请输入你的 Key（API Key）”
+   3. “默认参数为 auto，是否需要改成其他 model？”
+2. 如果用户直接在 `/setup` 后提供了 `url`、`apikey` 或 `model`，复用已提供的值，只追问缺失项。
+3. 默认 `model` 使用 `auto`。
+4. 信息齐全后调用：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup --url <url> --apikey <apikey> --model <model>
+node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model auto
 ```
 
 当用户使用 `/generate-image` 时：
@@ -109,48 +118,58 @@ node skill/generate-image/scripts/generate-image.mjs steup --url <url> --apikey 
    - `size`
    - `model`
    - `output`
+   - `output-file`（最终图片文件路径；也可把带 `.png`、`.jpg`、`.jpeg`、`.webp` 后缀的路径传给 `output`）
+   - `index`（图片路径、提示词和生成结果的字典文件路径）
    - `url` / `apikey` 覆盖值
    - 其他可透传参数，使用 `--param key=value`
-2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动进入 `/generate-image:steup` 初始化流程，并按步骤引导用户提供：
-   1. API Base URL
-   2. API Key
-   3. 可选默认模型（默认 `gpt-image-2`）
-   然后提示运行 `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`。
-3. 如果用户没有明确尺寸，默认使用 `1024x1024`。
-4. 调用 helper 脚本前，告诉用户将先生成同尺寸占位图。
-5. 调用：
+2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动进入 `/setup` 初始化流程，并按步骤引导用户提供：
+   1. “请输入你的 URL（API Base URL）”
+   2. “请输入你的 Key（API Key）”
+   3. “默认参数为 auto，是否需要改成其他 model？”
+   然后用收集到的信息运行 helper。
+3. 如果用户没有明确尺寸，默认使用 `auto`。
+4. 创建占位图后，不要在主流程里等待图片生成；启动后台 subagent：
+   - 名字必须是 `painter`。
+   - 任务内容是运行 helper 的 `generate` 命令并保存最终图。
+   - 把 prompt、size、model、output / output-file、index、url/apikey 覆盖值和所有 `--param` 原样传给 helper。
+5. `painter` 完成后，用它返回的生成图片路径作为最终结果；向用户报告生成图路径和占位图路径。
+6. 如果 `painter` 失败，报告错误信息，并说明占位图已保留。
+7. helper 调用格式：
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
 ```
 
-6. 成功时报告生成图片路径和占位图路径。
-7. 失败时报告错误信息，并说明占位图已保留。
+8. 成功时报告生成图片路径和占位图路径。
+9. 失败时报告错误信息，并说明占位图已保留。
 
 ### 参数表
 
 | 参数 | 说明 | 默认值 |
 | --- | --- | --- |
 | `--prompt` | 图片提示词，也可作为位置参数传入 | 必填 |
-| `--size` | 图片尺寸：`1024x1024`、`1024x1536`、`1536x1024`、`auto`（占位图按 `1024x1024` 创建） | `1024x1024` |
-| `--model` | 图片模型名称 | `gpt-image-2` |
+| `--size` | 图片尺寸：`1024x1024`、`1024x1536`、`1536x1024`、`auto`（占位图按 `1024x1024` 创建） | `auto` |
+| `--model` | 图片模型名称 | `auto` |
 | `--url` | API base URL 覆盖值 | 初始化配置中的值 |
 | `--apikey` / `--api-key` | API Key 覆盖值 | 初始化配置中的值 |
-| `--output` | 输出目录 | `./generated-images` |
+| `--output` | 输出目录；如果值以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终图片文件路径 | `./generated-images` |
+| `--output-file` | 最终图片文件路径 | 无 |
+| `--index` | 图片索引字典文件路径，记录图片路径、提示词和生成结果 | `<输出目录>/image-index.json` |
 | `--param key=value` | 透传给生成接口的额外参数，可重复 | 无 |
 | `--config` | 自定义配置文件路径 | `~/.claude/generate-image/config.json` |
 
 ### 输出行为
 
 - 占位图：`placeholder-<timestamp>-<width>x<height>.svg`
-- 生成图：`generated-<timestamp>.png|jpg|webp`
+- 生成图：`generated-<timestamp>.png|jpg|webp`，或 `--output-file` / 文件型 `--output` 指定的路径
 - 默认目录：当前工作目录下的 `generated-images/`
+- 索引字典：默认 `<输出目录>/image-index.json`，键为生成图片路径，值包含 `prompt`、`placeholderPath`、`generatedPath`、`result`、`model`、`size`、`params` 和时间戳
 
 ### 失败提示
 
 常见失败与处理：
 
-- 未初始化：自动进入初始化引导，提示运行 `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`。
+- 未初始化：自动进入 `/setup` 初始化引导，按步骤询问 URL、Key，并使用默认参数 `auto`。
 - API Key 缺失：补充 `--apikey` 或重新初始化。
 - 接口返回非 2xx：显示 `图片生成失败：...`。
 - 响应没有图片：显示 `响应中没有 b64_json 或 url`。
@@ -166,22 +185,24 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 ### Overview
 
-`generate-image` lets Claude Code invoke an image generation API through slash skills. It mirrors the desktop app's core generation flow: read URL/API key/model settings, accept a prompt and parameters, create a same-resolution placeholder first, call an OpenAI Images API-compatible generation endpoint, then save the final image locally.
+`generate-image` lets Claude Code generate images through slash skills. The flow stays intentionally simple: accept prompt and parameters, create a same-resolution placeholder, run image generation in a background subagent named `painter`, then report the final image path so it can replace the placeholder.
 
 ### Slash skills
 
 This skill exposes two entries:
 
-1. `/generate-image:steup`
+1. `/setup`
    - Sets up API settings.
    - Requires `url` and `apikey`.
    - Optionally sets the default `model`.
 
 2. `/generate-image`
    - Generates an image from a prompt.
-   - If the skill is not set up yet, automatically enters the `/generate-image:steup` setup flow and asks the user to provide `url` and `apikey` step by step.
+   - If the skill is not set up yet, automatically enters the `/setup` flow and asks for URL, key, and whether to keep the default `auto` parameter step by step.
    - Parameters can be passed after the slash command or described in natural language.
    - Creates a same-resolution placeholder before the API call.
+   - Runs image generation in a background subagent named `painter`.
+   - Supports an output directory or final image file path.
    - On failure, reports the error and keeps the placeholder path.
 
 ### Install with npx skills
@@ -203,10 +224,10 @@ Restart Claude Code or open a new session after installation so the skill list i
 ### setup
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup \
+node skill/generate-image/scripts/generate-image.mjs setup \
   --url https://api.example.com/v1 \
   --apikey sk-your-key \
-  --model gpt-image-2
+  --model auto
 ```
 
 Default config path:
@@ -246,14 +267,20 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Agent instructions
 
-For `/generate-image:steup`:
+Simplified flow: input prompt → create placeholder → run background `painter` subagent → report the final image path so it can replace the placeholder.
 
-1. Extract `url`, `apikey`, and optional `model` from the user's request.
-2. If `url` or `apikey` is missing, ask the user to provide it.
-3. Run:
+For `/setup`:
+
+1. Do not require the user to write the full command up front; ask for values in order:
+   1. “Please enter your URL (API Base URL).”
+   2. “Please enter your Key (API Key).”
+   3. “The default parameter is auto. Do you want to use another model?”
+2. If the user already provided `url`, `apikey`, or `model` after `/setup`, reuse provided values and only ask for missing ones.
+3. Default `model` to `auto`.
+4. Once all required values are available, run:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup --url <url> --apikey <apikey> --model <model>
+node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model auto
 ```
 
 For `/generate-image`:
@@ -263,49 +290,59 @@ For `/generate-image`:
    - `size`
    - `model`
    - `output`
+   - `output-file`（最终图片文件路径；也可把带 `.png`、`.jpg`、`.jpeg`、`.webp` 后缀的路径传给 `output`）
+   - `index`（图片路径、提示词和生成结果的字典文件路径）
    - `url` / `apikey` overrides
    - passthrough parameters as `--param key=value`
-2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; automatically enter the `/generate-image:steup` setup flow and guide the user step by step to provide:
-   1. API Base URL
-   2. API Key
-   3. Optional default model (defaults to `gpt-image-2`)
-   Then ask the user to run `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`.
-3. Default to `1024x1024` when size is not specified.
-4. Tell the user that a same-resolution placeholder will be created first.
-5. Run:
+2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; automatically enter the `/setup` flow and guide the user step by step to provide:
+   1. “Please enter your URL (API Base URL).”
+   2. “Please enter your Key (API Key).”
+   3. “The default parameter is auto. Do you want to use another model?”
+   Then run the helper with the collected values.
+3. Default to `auto` when size is not specified.
+4. After creating the placeholder, do not wait for image generation in the main flow; launch a background subagent:
+   - Its name must be `painter`.
+   - Its task is to run the helper `generate` command and save the final image.
+   - Pass prompt, size, model, output / output-file, index, url/apikey overrides, and all `--param` values through unchanged.
+5. When `painter` finishes, use its generated image path as the final result; report both the generated image path and placeholder path.
+6. If `painter` fails, report the error and mention that the placeholder remains available.
+7. Helper command format:
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <size> [other args]
 ```
 
-6. On success, report the generated image path and placeholder path.
-7. On failure, report the error and mention that the placeholder remains available.
+8. On success, report the generated image path and placeholder path.
+9. On failure, report the error and mention that the placeholder remains available.
 
 ### Parameters
 
 | Parameter | Meaning | Default |
 | --- | --- | --- |
 | `--prompt` | Image prompt; can also be passed as positional text | Required |
-| `--size` | Image size: `1024x1024`, `1024x1536`, `1536x1024`, or `auto` (placeholder uses `1024x1024`) | `1024x1024` |
-| `--model` | Image model name | `gpt-image-2` |
+| `--size` | Image size: `1024x1024`, `1024x1536`, `1536x1024`, or `auto` (placeholder uses `1024x1024`) | `auto` |
+| `--model` | Image model name | `auto` |
 | `--url` | API base URL override | Config value |
 | `--apikey` / `--api-key` | API key override | Config value |
-| `--output` | Output directory | `./generated-images` |
+| `--output` | Output directory; if the value ends with `.png`, `.jpg`, `.jpeg`, or `.webp`, it is treated as the final image file path | `./generated-images` |
+| `--output-file` | Final image file path | None |
+| `--index` | Image index dictionary file path; records image paths, prompts, and generation results | `<output directory>/image-index.json` |
 | `--param key=value` | Extra API parameter; repeatable | None |
 | `--config` | Custom config path | `~/.claude/generate-image/config.json` |
 
 ### Output behavior
 
 - Placeholder: `placeholder-<timestamp>-<width>x<height>.svg`
-- Generated image: `generated-<timestamp>.png|jpg|webp`
+- Generated image: `generated-<timestamp>.png|jpg|webp`, or the path specified by `--output-file` / file-style `--output`
 - Default directory: `generated-images/` under the current working directory.
+- Index dictionary: defaults to `<output directory>/image-index.json`; keys are generated image paths, values include `prompt`, `placeholderPath`, `generatedPath`, `result`, `model`, `size`, `params`, and timestamps.
 
 ### Failure handling
 
 Common failures:
 
-- Not set up: automatically enter `/generate-image:steup` and guide the user step by step.
-- Missing API key: pass `--apikey` or run `/generate-image:steup` again.
+- Not set up: automatically enter `/setup` and ask for URL, key, and whether to keep the default `auto` parameter step by step.
+- Missing API key: pass `--apikey` or run `/setup` again.
 - Non-2xx API response: the helper prints `图片生成失败：...`.
 - Response has no image: the helper reports missing `b64_json` or `url`.
 - URL download failure: the helper prints the HTTP status.

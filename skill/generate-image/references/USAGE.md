@@ -4,11 +4,11 @@
 
 ### 简介
 
-`generate-image` 是一个 Claude Code skill，用于通过兼容 OpenAI Images API 的接口生成图片。它支持初始化 URL/API Key，支持提示词和参数输入，并在实际生成前创建同分辨率占位图。
+`generate-image` 是一个 Claude Code skill，用于通过兼容 OpenAI Images API 的接口生成图片。它支持通过 `/setup` 分步初始化 URL/API Key，支持提示词、参数和输出位置输入。生成流程简化为：输入 prompt → 生成同分辨率占位图 → 后台运行名为 `painter` 的 subagent → 拿到最终结果后替换占位图。
 
 ### 命令
 
-- `/generate-image:steup`：设置 API URL、API Key、默认模型。
+- `/setup`：分步设置 API URL、API Key，默认参数为 `auto`。
 - `/generate-image`：输入提示词和参数，生成图片。
 
 ### npx skills 安装
@@ -27,28 +27,28 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 
 安装后重启 Claude Code 或开启新会话。
 
-### 初始化示例
+### setup 示例
 
 ```text
-/generate-image:steup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
+/setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
 ```
 
 内部执行：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
+node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
 ```
 
 ### 未初始化时的引导
 
-如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动进入 `/generate-image:steup` 初始化流程，并一步一步引导你提供：
+如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动进入 `/setup` 初始化流程，并一步一步引导你提供：
 
-1. API Base URL
-2. API Key
-3. 可选默认模型（默认 `gpt-image-2`）
+1. 请输入你的 URL（API Base URL）
+2. 请输入你的 Key（API Key）
+3. 默认参数为 `auto`，如需覆盖可提供其他 model
 
 ```text
-/generate-image:steup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2
+/setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto
 ```
 
 不会只返回一个模糊失败错误。
@@ -56,7 +56,7 @@ node skill/generate-image/scripts/generate-image.mjs steup --url https://api.exa
 ### 生成示例
 
 ```text
-/generate-image 一张赛博朋克风格的上海夜景，尺寸 1536x1024，quality=high
+/generate-image 一张赛博朋克风格的上海夜景，尺寸 1536x1024，quality=high output-file=./generated-images/shanghai.png
 ```
 
 内部执行示例：
@@ -65,6 +65,7 @@ node skill/generate-image/scripts/generate-image.mjs steup --url https://api.exa
 node skill/generate-image/scripts/generate-image.mjs generate \
   --prompt "一张赛博朋克风格的上海夜景" \
   --size 1536x1024 \
+  --output-file ./generated-images/shanghai.png \
   --param quality=high
 ```
 
@@ -74,20 +75,23 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 | --- | --- | --- |
 | prompt | 是 | 图片提示词 |
 | size | 否 | `1024x1024`、`1024x1536`、`1536x1024`、`auto` |
-| model | 否 | 默认 `gpt-image-2` |
+| model | 否 | 默认 `auto` |
 | url | 否 | 覆盖初始化 URL |
 | apikey | 否 | 覆盖初始化 API Key |
-| output | 否 | 输出目录 |
+| output | 否 | 输出目录；如果值以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终图片文件路径 |
+| output-file | 否 | 最终图片文件路径 |
+| index | 否 | 图片索引字典文件路径；默认 `<输出目录>/image-index.json` |
 | param | 否 | 任意透传参数，格式 `key=value` |
 
 ### 输出
 
-默认输出目录是当前目录下的 `generated-images/`。
+默认输出目录是当前目录下的 `generated-images/`。也可以使用 `output-file` 指定最终图片文件路径，或把带图片扩展名的路径传给 `output`。每次生成会维护一个索引字典文件，默认路径为 `<输出目录>/image-index.json`，用于按图片路径查询对应提示词和生成结果。
 
 每次生成包含：
 
 1. 占位图：生成请求发出前创建，尺寸与目标图片一致。
-2. 生成图片：API 成功返回后保存。
+2. 后台任务：名为 `painter` 的 subagent 执行实际生成。
+3. 生成图片：API 成功返回后保存，并作为最终结果替换占位图。
 
 ### 错误处理
 
@@ -105,11 +109,11 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Introduction
 
-`generate-image` is a Claude Code skill for generating images through an OpenAI Images API-compatible endpoint. It supports URL/API key initialization, prompt and parameter input, and creates a same-resolution placeholder before the real image generation request.
+`generate-image` is a Claude Code skill for generating images through an OpenAI Images API-compatible endpoint. It supports step-by-step URL/API key setup through `/setup`, prompt, parameter, and output-location input. The generation flow is simplified to: input prompt → create a same-resolution placeholder → run a background subagent named `painter` → replace the placeholder with the final result.
 
 ### Commands
 
-- `/generate-image:steup`: configure API URL, API key, and default model.
+- `/setup`: configure API URL and API key step by step; the default parameter is `auto`.
 - `/generate-image`: generate an image from a prompt and parameters.
 
 ### Install with npx skills
@@ -131,25 +135,25 @@ Restart Claude Code or open a new session after installation.
 ### Setup example
 
 ```text
-/generate-image:steup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
+/setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
 ```
 
 Internal command:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs steup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
+node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
 ```
 
 ### Setup guidance when not set up
 
-If `/generate-image` is used before URL or API key configuration exists, the skill automatically enters the `/generate-image:steup` setup flow and guides the user step by step to provide:
+If `/generate-image` is used before URL or API key configuration exists, the skill automatically enters the `/setup` setup flow and guides the user step by step to provide:
 
-1. API Base URL
-2. API Key
-3. Optional default model (defaults to `gpt-image-2`)
+1. Please enter your URL (API Base URL)
+2. Please enter your Key (API Key)
+3. The default parameter is `auto`; provide another model only if needed
 
 ```text
-/generate-image:steup url=<your API Base URL> apikey=<your API Key> model=gpt-image-2
+/setup url=<your API Base URL> apikey=<your API Key> model=auto
 ```
 
 It does not only return a vague failure.
@@ -157,7 +161,7 @@ It does not only return a vague failure.
 ### Generate example
 
 ```text
-/generate-image a cyberpunk night view of Shanghai, size 1536x1024, quality=high
+/generate-image a cyberpunk night view of Shanghai, size 1536x1024, quality=high output-file=./generated-images/shanghai.png
 ```
 
 Internal command example:
@@ -166,6 +170,7 @@ Internal command example:
 node skill/generate-image/scripts/generate-image.mjs generate \
   --prompt "a cyberpunk night view of Shanghai" \
   --size 1536x1024 \
+  --output-file ./generated-images/shanghai.png \
   --param quality=high
 ```
 
@@ -175,20 +180,23 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 | --- | --- | --- |
 | prompt | Yes | Image prompt |
 | size | No | `1024x1024`, `1024x1536`, `1536x1024`, or `auto` |
-| model | No | Defaults to `gpt-image-2` |
+| model | No | Defaults to `auto` |
 | url | No | Overrides configured URL |
 | apikey | No | Overrides configured API key |
-| output | No | Output directory |
+| output | No | Output directory; if the value ends with `.png`, `.jpg`, `.jpeg`, or `.webp`, it is treated as the final image file path |
+| output-file | No | Final image file path |
+| index | No | Image index dictionary file path; defaults to `<output directory>/image-index.json` |
 | param | No | Passthrough parameter in `key=value` format |
 
 ### Output
 
-The default output directory is `generated-images/` under the current directory.
+The default output directory is `generated-images/` under the current directory. You can also use `output-file` for the final image file path, or pass an image-extension path to `output`. Each generation maintains an index dictionary file, defaulting to `<output directory>/image-index.json`, for looking up prompts and generation results by image path.
 
 Each generation includes:
 
 1. Placeholder image: created before the API request, with the same target resolution.
-2. Generated image: saved after the API returns successfully.
+2. Background task: the `painter` subagent performs the actual generation.
+3. Generated image: saved after the API returns successfully and used as the final replacement for the placeholder.
 
 ### Error handling
 

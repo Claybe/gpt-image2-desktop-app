@@ -3,14 +3,14 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "/generate-image:steup url=https://api.example.com/v1 apikey=sk-test model=gpt-image-2",
-      "expected_output": "Agent extracts url/apikey/model through /generate-image:steup and sets up the config without exposing the key in summaries.",
+      "prompt": "/setup url=https://api.example.com/v1 apikey=sk-test model=auto",
+      "expected_output": "Agent extracts url/apikey/model through /setup and sets up the config without exposing the key in summaries.",
       "files": []
     },
     {
       "id": 2,
       "prompt": "/generate-image 一张 1536x1024 的赛博朋克城市夜景，quality=high",
-      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-resolution placeholder first, then calls generation.",
+      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-resolution placeholder first, then launches the painter background subagent for generation.",
       "files": []
     },
     {
@@ -21,8 +21,14 @@
     },
     {
       "id": 4,
+      "prompt": "/generate-image --prompt \"neon robot portrait\" --size 1024x1024 --output-file ./generated-images/robot.png --index ./generated-images/image-index.json",
+      "expected_output": "Agent creates the placeholder, launches a background subagent named painter to run generation, saves the final image to the requested file path, and updates the image-index dictionary with prompt, image path, and generation result.",
+      "files": []
+    },
+    {
+      "id": 5,
       "prompt": "/generate-image a watercolor dragon, size 1024x1024",
-      "expected_output": "When no URL or API key is configured, Agent automatically enters the /generate-image:steup setup flow and guides the user step by step for API Base URL, API Key, and optional model instead of returning a vague failure.",
+      "expected_output": "When no URL or API key is configured, Agent automatically enters the /setup flow and guides the user step by step by asking for URL, key, and whether to keep the default auto parameter instead of returning a vague failure.",
       "files": []
     }
   ]
