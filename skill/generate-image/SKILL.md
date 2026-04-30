@@ -73,7 +73,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 2. 如果未指定 `size`，使用 `auto`。
 3. 如果未指定 `model`，使用 `gpt-image-2`。
 4. 组织 prompt 时保留用户意图，并补齐资产描述结构：
-   - `[资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`
+   - `[资产名称/用途] + [资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`
 5. 每张图只生成一个主体。不要把多个资产、多个变体或多个主体放在同一张图里；多个资产应分别调用 `/gi`，生成独立贴图。
 6. 生成时启动名为 `painter` 的后台 subagent，让它运行 helper 的 `generate` 命令。helper 会创建占位图、调用 API、保存最终图并更新索引。
 7. `painter` 完成后，报告生成图路径、占位图路径和索引路径。
@@ -103,7 +103,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 ### 输出行为
 
 - PNG 占位图：先写入最终图片路径
-- 生成图：生成成功后用真实图片覆盖同一路径，路径来自 `generated-<timestamp>.png` 或 `--output-file` / 文件型 `--output` 指定路径
+- 生成图：生成成功后用真实图片覆盖同一路径，路径默认会从资产名称/用途或具体主体生成，例如 `小飞机-<timestamp>.png` 或 `--output-file` / 文件型 `--output` 指定路径
 - 索引字典：默认 `<输出目录>/image-index.json`
 
 索引键为图片路径；成功时 `placeholderPath` 与 `generatedPath` 相同，值包含 `prompt`、`placeholderPath`、`generatedPath`、`result`、`model`、`size`、`params` 和时间戳。失败时会记录错误，并在同一路径保留占位图。
@@ -181,7 +181,7 @@ If configuration is missing, do not only fail. Enter the `/gi-setup` flow and as
 2. Use `auto` when `size` is not specified.
 3. Use `gpt-image-2` when `model` is not specified.
 4. Preserve the user's intent while completing this asset prompt structure:
-   - `[asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`
+   - `[asset name/purpose] + [asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`
 5. Generate one subject per image. Do not put multiple assets, variants, or subjects into one image; call `/gi` separately for independent textures.
 6. Start a background subagent named `painter` and have it run the helper `generate` command. The helper creates the placeholder, calls the API, saves the final image, and updates the index.
 7. When `painter` finishes, report the generated image path, placeholder path, and index path.
@@ -211,7 +211,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 ### Output behavior
 
 - PNG placeholder: first written to the final image path
-- Generated image: on success, the real image overwrites the same path from `generated-<timestamp>.png` or the path specified by `--output-file` / file-style `--output`
+- Generated image: on success, the real image overwrites the same path derived from the asset name/purpose or specific subject, for example `small-airplane-<timestamp>.png` or the path specified by `--output-file` / file-style `--output`
 - Index dictionary: defaults to `<output directory>/image-index.json`
 
 The index key is the image path. On success, `placeholderPath` and `generatedPath` are the same path. Values include `prompt`, `placeholderPath`, `generatedPath`, `result`, `model`, `size`, `params`, and timestamps. On failure, the error is recorded and the placeholder remains at that same path.

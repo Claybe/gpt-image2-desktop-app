@@ -342,8 +342,40 @@ async function updateImageIndex(indexPath, entry) {
   await fs.writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`, 'utf8');
 }
 
-function getDefaultGeneratedPath(outputDir) {
-  return path.join(outputDir, `generated-${Date.now()}.png`);
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractLabeledPromptValue(prompt, labels) {
+  const bracketLabelMatch = /\[([^\]]+)\]\s*[:：]?\s*([^+，,；;。\n]+)/.exec(prompt);
+  if (bracketLabelMatch?.[2] && labels.includes(bracketLabelMatch[1].trim())) {
+    return bracketLabelMatch[2];
+  }
+
+  for (const label of labels) {
+    const escapedLabel = escapeRegExp(label);
+    const pattern = new RegExp(`(?:^|[+，,；;。\\n\\s])${escapedLabel}\\s*[:：]?\\s*([^+，,；;。\\n]+)`, 'i');
+    const match = pattern.exec(prompt);
+    if (match?.[1]) return match[1];
+  }
+  return undefined;
+}
+
+function createAssetFileSlug(prompt) {
+  const labeledValue = extractLabeledPromptValue(prompt, ['资产名称/用途', '资产名称', '资源名称', '用途', '使用场景', '具体主体', 'asset name/purpose', 'asset name', 'purpose', 'use case', 'specific subject']);
+  const source = labeledValue || prompt;
+  const slug = source
+    .replace(/\[[^\]]+\]/g, ' ')
+    .replace(/透明背景|transparent background|background/gi, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/g, '');
+  return slug || 'generated-image';
+}
+
+function getDefaultGeneratedPath(outputDir, prompt) {
+  return path.join(outputDir, `${createAssetFileSlug(prompt)}-${Date.now()}.png`);
 }
 
 async function saveGeneratedImage(image, generatedPath, placeholderPath) {
@@ -463,7 +495,7 @@ async function generate(args) {
   const size = normalizeSize(args.size || naturalOptions.size || 'auto');
   const model = normalizeModel(args.model || naturalOptions.model || config.model);
   const output = resolveOutputPaths(args.output || naturalOptions.output, args['output-file'] || naturalOptions.outputFile);
-  const generatedPath = output.generatedPath || getDefaultGeneratedPath(output.outputDir);
+  const generatedPath = output.generatedPath || getDefaultGeneratedPath(output.outputDir, prompt);
   const placeholderPath = generatedPath;
   await createPlaceholder(placeholderPath, size.width, size.height);
   const indexPath = path.resolve(args.index || naturalOptions.index || getDefaultIndexPath(output.outputDir));
