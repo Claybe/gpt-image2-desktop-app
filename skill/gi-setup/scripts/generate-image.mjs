@@ -11,7 +11,7 @@ const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), '.claybe', '.generate-image'
 const DEFAULT_SETTINGS_PATH = path.join(process.cwd(), 'setting.json');
 const DEFAULT_MODEL = 'gpt-image-2';
 const ASPECT_RATIOS = ['custom', '16:9', '9:16', '3:2', '4:3', '1:1'];
-const RESOLUTIONS = ['1k', '2k', '4k'];
+const SIZE_RE = /^(\d+)x(\d+)$/;
 
 function usage() {
   return `generate-image helper
@@ -19,12 +19,12 @@ function usage() {
 Commands:
   setup --url <api-base-url> --apikey <api-key> [--model <model>] [--config <path>]
   setup --use-settings [--settings <path>] [--model <model>] [--config <path>]
-  generate --prompt <text> [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--resolution 1k|2k|4k] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
+  generate --prompt <text> [--size auto|<width>x<height>] [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
 
 Examples:
   node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-... --model gpt-image-2
   node scripts/generate-image.mjs setup --use-settings
-  node scripts/generate-image.mjs generate --prompt "a glass dragon, 1:1" --resolution 1k --param quality=high
+  node scripts/generate-image.mjs generate --prompt "a glass dragon, 1:1" --size 1024x1024 --param quality=high
 `;
 }
 
@@ -101,33 +101,33 @@ function normalizeAspectRatio(aspectRatio) {
   return normalized;
 }
 
-function normalizeResolution(resolution) {
-  const normalized = String(resolution || '1k').toLowerCase();
-  if (!RESOLUTIONS.includes(normalized)) {
-    throw new Error(`resolution 必须是 1k、2k 或 4k，当前为：${resolution}`);
-  }
-  return normalized;
-}
-
-function getImageSize(aspectRatio, resolution) {
-  if (aspectRatio === 'custom') return { apiSize: 'auto', width: 1024, height: 1024 };
-  const base = resolution === '4k' ? 4096 : resolution === '2k' ? 2048 : 1024;
-  const [widthRatio, heightRatio] = aspectRatio.split(':').map(Number);
-  if (widthRatio === heightRatio) return { apiSize: `${base}x${base}`, width: base, height: base };
-  if (widthRatio > heightRatio) return { apiSize: `${Math.round(base * (widthRatio / heightRatio))}x${base}`, width: Math.round(base * (widthRatio / heightRatio)), height: base };
-  return { apiSize: `${base}x${Math.round(base * (heightRatio / widthRatio))}`, width: base, height: Math.round(base * (heightRatio / widthRatio)) };
-}
-
 function inferAspectRatioFromPrompt(prompt) {
   const match = /(?:比例|出图比例|画幅|aspect[- ]?ratio|ratio)?\s*(16[:：]9|9[:：]16|3[:：]2|4[:：]3|1[:：]1)/i.exec(prompt);
   return match?.[1]?.replace('：', ':');
 }
 
-function normalizeSize(aspectRatioValue, resolutionValue, prompt = '') {
+function normalizeSizeValue(sizeValue) {
+  const normalized = String(sizeValue || 'auto').toLowerCase();
+  if (normalized === 'auto') return { apiSize: 'auto', width: 1024, height: 1024 };
+
+  const match = SIZE_RE.exec(normalized);
+  if (!match) {
+    throw new Error(`size 必须是 auto 或 <宽>x<高>，当前为：${sizeValue}`);
+  }
+
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new Error(`size 宽高必须是正整数，当前为：${sizeValue}`);
+  }
+
+  return { apiSize: `${width}x${height}`, width, height };
+}
+
+function normalizeSize(sizeValue, aspectRatioValue, prompt = '') {
   const aspectRatio = normalizeAspectRatio(aspectRatioValue);
-  const resolution = normalizeResolution(resolutionValue);
   const resolvedAspectRatio = aspectRatio === 'custom' ? inferAspectRatioFromPrompt(prompt) || 'custom' : aspectRatio;
-  return { ...getImageSize(resolvedAspectRatio, resolution), aspectRatio: resolvedAspectRatio, resolution };
+  return { ...normalizeSizeValue(sizeValue), aspectRatio: resolvedAspectRatio };
 }
 
 function resolveOutputPaths(outputValue, outputFileValue) {
@@ -443,7 +443,7 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
   const extracted = {
     prompt: rawPrompt,
     aspectRatio: undefined,
-    resolution: undefined,
+    size: undefined,
     model: undefined,
     url: undefined,
     apiKey: undefined,
@@ -460,8 +460,8 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
 
     if ((normalizedKey === 'aspect-ratio' || normalizedKey === 'aspectratio' || normalizedKey === 'ratio' || normalizedKey === '比例') && !explicitParams['aspect-ratio'] && !explicitParams.aspectRatio) {
       extracted.aspectRatio = cleanedValue;
-    } else if ((normalizedKey === 'resolution' || normalizedKey === '清晰度' || normalizedKey === '档位') && !explicitParams.resolution) {
-      extracted.resolution = cleanedValue;
+    } else if ((normalizedKey === 'size' || normalizedKey === '尺寸' || normalizedKey === '分辨率') && !explicitParams.size) {
+      extracted.size = cleanedValue;
     } else if (normalizedKey === 'model' && !explicitParams.model) {
       extracted.model = cleanedValue;
     } else if ((normalizedKey === 'url' || normalizedKey === 'api-base-url') && !explicitParams.url) {
@@ -489,11 +489,11 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
     }
   }
 
-  if (!explicitParams.resolution) {
-    const resolutionMatch = /(?:清晰度|分辨率|档位|resolution)?\s*([124]k)/i.exec(extracted.prompt);
-    if (resolutionMatch) {
-      extracted.resolution = resolutionMatch[1].toLowerCase();
-      extracted.prompt = extracted.prompt.replace(resolutionMatch[0], ' ');
+  if (!explicitParams.size) {
+    const sizeMatch = /(?:尺寸|分辨率|size)\s*[:=：]?\s*(auto|\d+x\d+)/i.exec(extracted.prompt);
+    if (sizeMatch) {
+      extracted.size = sizeMatch[1].toLowerCase();
+      extracted.prompt = extracted.prompt.replace(sizeMatch[0], ' ');
     }
   }
 
@@ -530,7 +530,7 @@ async function generate(args) {
   const apiBaseUrl = normalizeBaseUrl(candidateApiBaseUrl);
 
   const requestedAspectRatio = args['aspect-ratio'] || args.aspectRatio || naturalOptions.aspectRatio;
-  const size = normalizeSize(requestedAspectRatio, args.resolution || naturalOptions.resolution, rawPrompt);
+  const size = normalizeSize(args.size || naturalOptions.size, requestedAspectRatio, rawPrompt);
   const model = normalizeModel(args.model || naturalOptions.model || config.model);
   const output = resolveOutputPaths(args.output || naturalOptions.output, args['output-file'] || naturalOptions.outputFile);
   const generatedPath = output.generatedPath || getDefaultGeneratedPath(output.outputDir, prompt);
@@ -554,7 +554,6 @@ async function generate(args) {
     placeholderPath,
     model,
     aspectRatio: size.aspectRatio,
-    resolution: size.resolution,
     size: size.apiSize,
     params,
     endpoint,
@@ -613,7 +612,7 @@ async function generate(args) {
   console.log(`图片生成完成并已覆盖占位图：${generatedPath}`);
   console.log(`索引已更新：${indexPath}`);
   console.log(`耗时：${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`);
-  console.log(JSON.stringify({ placeholderPath, generatedPath, indexPath, endpoint, model, aspectRatio: size.aspectRatio, resolution: size.resolution, size: size.apiSize }, null, 2));
+  console.log(JSON.stringify({ placeholderPath, generatedPath, indexPath, endpoint, model, aspectRatio: size.aspectRatio, size: size.apiSize }, null, 2));
 }
 
 async function main() {

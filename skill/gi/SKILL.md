@@ -1,7 +1,7 @@
 ---
 name: gi
-description: Use when the user wants Claude Code to generate images from prompts with /gi, create PNG placeholders, delegate generation to a background subagent named painter, pass model/aspect/resolution/output parameters, choose output paths, or maintain an image index. If setup is missing, guide the user to /gi-setup instead of failing.
-argument-hint: "<prompt> [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--resolution 1k|2k|4k] [--model gpt-image-2] [--output <dir>|--output-file <path>] [--param key=value]"
+description: Use when the user wants Claude Code to generate images from prompts with /gi, create PNG placeholders, delegate generation to a background subagent named painter, pass model/aspect/size/output parameters, choose output paths, or maintain an image index. If setup is missing, guide the user to /gi-setup instead of failing.
+argument-hint: "<prompt> [--size auto|<width>x<height>] [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--model gpt-image-2] [--output <dir>|--output-file <path>] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -16,7 +16,7 @@ argument-hint: "<prompt> [--aspect-ratio custom|16:9|9:16|3:2|4:3|1:1] [--resolu
 
 - 默认模型：`gpt-image-2`（兼容旧配置里的 `gpt-image2` / `auto`，helper 会映射为 `gpt-image-2`）
 - 默认出图比例：`custom`（从提示词获取；未获取到则使用 API `auto`）
-- 默认清晰度：`1k`（指定明确比例时会换算为实际 API `size`）
+- 默认尺寸：`auto`；Agent 应根据资产用途、性能成本与视觉细节需求选择具体 `size`（如 `1024x1024`、`1536x1024`、`1024x1536`），无法判断时交给 API `auto`
 - 默认输出目录：项目目录下 `.claybe/.generate-image/`
 - 默认配置文件：`~/.claude/generate-image/config.json`
 
@@ -55,7 +55,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 用于生成图片。支持 CLI 风格参数，也支持从自然语言中提取参数：
 
 ```text
-/gi 一张赛博朋克风格的上海夜景，出图比例 3:2，清晰度 1k，quality=high output-file=./.claybe/.generate-image/shanghai.png
+/gi 一张赛博朋克风格的上海夜景，出图比例 3:2，size=1536x1024，quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 当配置缺失时，不要只报错；进入 `/gi-setup` 引导用户配置 URL/API Key，或询问是否使用项目 `setting.json`。
@@ -65,14 +65,14 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 1. 从 `/gi` 输入中提取：
    - `prompt`
    - `aspect-ratio` / `ratio` / `比例`
-   - `resolution` / `清晰度` / `档位`
+   - `size` / `尺寸` / `分辨率`（具体宽高或 `auto`）
    - `model`
    - `output`
    - `output-file`
    - `index`
    - `url` / `apikey`
    - 其他 `key=value` 参数，作为 `--param key=value` 透传
-2. 如果未指定出图比例，使用 `custom`：优先从提示词提取 `16:9`、`9:16`、`3:2`、`4:3`、`1:1`；如果提示词没有比例，则使用 API `auto`。如果未指定清晰度，使用 `1k`。
+2. 如果未指定出图比例，使用 `custom`：优先从提示词提取 `16:9`、`9:16`、`3:2`、`4:3`、`1:1`；如果提示词没有比例，则使用 API `auto`。如果未指定 `size`，Agent 应根据资产用途、性能成本与视觉细节需求选择具体宽高；无法判断时使用 `auto`。
 3. 如果未指定 `model`，使用 `gpt-image-2`。
 4. 组织 prompt 时保留用户意图，并补齐资产描述结构：
    - `[资产名称/用途] + [资产类型] + [具体主体] + [艺术风格] + [视角] + [光影细节] + [背景要求]`
@@ -84,7 +84,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 helper 调用格式：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> --resolution <1k|2k|4k> [other args]
+node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <auto|宽x高> --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> [other args]
 ```
 
 ### 参数表
@@ -93,7 +93,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | --- | --- | --- |
 | `--prompt` | 图片提示词，也可作为位置参数传入 | 必填 |
 | `--aspect-ratio` | 出图比例：`custom`、`16:9`、`9:16`、`3:2`、`4:3`、`1:1`。`custom` 会从提示词获取，未获取到则使用 API `auto` | `custom` |
-| `--resolution` | 清晰度档位：`1k`、`2k`、`4k` | `1k` |
+| `--size` | 输出尺寸：`auto` 或 `<宽>x<高>`。Agent 根据资产用途、性能成本与视觉细节需求选择具体宽高；无法判断时用 `auto` | `auto` |
 | `--model` | 图片模型名称 | `gpt-image-2` |
 | `--url` | API base URL 覆盖值 | 初始化配置中的值 |
 | `--apikey` / `--api-key` | API Key 覆盖值 | 初始化配置中的值 |
@@ -127,7 +127,7 @@ Defaults:
 
 - Model: `gpt-image-2` (legacy `gpt-image2` / `auto` config values are mapped to `gpt-image-2` by the helper)
 - Aspect ratio: `custom` (extract from the prompt; if none is found, API `auto` is used)
-- Resolution tier: `1k` (converted to the actual API `size` when a concrete ratio is available)
+- Size: `auto` by default. The agent should choose a concrete `size` (for example `1024x1024`, `1536x1024`, or `1024x1536`) based on asset purpose, performance cost, and visual-detail needs; use API `auto` when uncertain.
 - Output directory: `.claybe/.generate-image/` under the project directory
 - Config file: `~/.claude/generate-image/config.json`
 
@@ -166,7 +166,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
 Generates an image. It accepts CLI-style parameters and can also extract parameters from natural language:
 
 ```text
-/gi a cyberpunk night view of Shanghai, aspect-ratio 3:2, resolution 1k, quality=high output-file=./.claybe/.generate-image/shanghai.png
+/gi a cyberpunk night view of Shanghai, aspect-ratio 3:2, size=1536x1024, quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 If configuration is missing, do not only fail. Enter the `/gi-setup` flow and ask for URL/API Key, or ask whether to use the project `setting.json`.
@@ -176,14 +176,14 @@ If configuration is missing, do not only fail. Enter the `/gi-setup` flow and as
 1. Extract from `/gi` input:
    - `prompt`
    - `aspect-ratio` / `ratio` / `比例`
-   - `resolution` / `清晰度` / `档位`
+   - `size` / `尺寸` / `分辨率`（具体宽高或 `auto`）
    - `model`
    - `output`
    - `output-file`
    - `index`
    - `url` / `apikey`
    - other `key=value` pairs as passthrough `--param key=value`
-2. Use `custom` when aspect ratio is not specified: extract `16:9`, `9:16`, `3:2`, `4:3`, or `1:1` from the prompt first; if no ratio is found, use API `auto`. Use `1k` when resolution tier is not specified.
+2. Use `custom` when aspect ratio is not specified: extract `16:9`, `9:16`, `3:2`, `4:3`, or `1:1` from the prompt first; if no ratio is found, use API `auto`. If `size` is not explicit, choose concrete dimensions based on asset purpose, performance cost, and visual-detail needs; use `auto` when uncertain.
 3. Use `gpt-image-2` when `model` is not specified.
 4. Preserve the user's intent while completing this asset prompt structure:
    - `[asset name/purpose] + [asset type] + [specific subject] + [art style] + [view angle] + [lighting details] + [background requirements]`
@@ -195,7 +195,7 @@ If configuration is missing, do not only fail. Enter the `/gi-setup` flow and as
 Helper command format:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> --resolution <1k|2k|4k> [other args]
+node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>" --size <auto|宽x高> --aspect-ratio <custom|16:9|9:16|3:2|4:3|1:1> [other args]
 ```
 
 ### Parameters
@@ -204,7 +204,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | --- | --- | --- |
 | `--prompt` | Image prompt; can also be positional text | Required |
 | `--aspect-ratio` | Aspect ratio: `custom`, `16:9`, `9:16`, `3:2`, `4:3`, or `1:1`. `custom` extracts the ratio from the prompt; if none is found, API `auto` is used | `custom` |
-| `--resolution` | Resolution tier: `1k`, `2k`, or `4k` | `1k` |
+| `--size` | Output size: `auto` or `<width>x<height>`. The agent chooses concrete dimensions based on asset purpose, performance cost, and visual-detail needs; use `auto` when uncertain. | `auto` |
 | `--model` | Image model name | `gpt-image-2` |
 | `--url` | API base URL override | Config value |
 | `--apikey` / `--api-key` | API key override | Config value |

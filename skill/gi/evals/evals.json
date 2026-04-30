@@ -10,7 +10,7 @@
     {
       "id": 2,
       "prompt": "/gi 一张 1536x1024 的赛博朋克城市夜景，quality=high",
-      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-resolution placeholder first, then launches the painter background subagent for generation.",
+      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-size placeholder first, then launches the painter background subagent for generation.",
       "files": []
     },
     {
