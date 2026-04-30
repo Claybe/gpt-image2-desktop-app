@@ -8,8 +8,10 @@
     "copy-preload": "node -e \"require('fs').mkdirSync('dist/preload',{recursive:true});require('fs').copyFileSync('src/preload/preload.cjs','dist/preload/preload.cjs')\"",
     "dev": "concurrently -k \"tsc -p tsconfig.json --watch\" \"vite --host 127.0.0.1\" \"wait-on tcp:5173 dist/main/main.js && npm run copy-preload && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "tsc -p tsconfig.json && npm run copy-preload && vite build && electron-builder",
+    "build:win": "tsc -p tsconfig.json && npm run copy-preload && vite build && electron-builder --win --x64",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "pack": "tsc -p tsconfig.json && npm run copy-preload && vite build && electron-builder --dir"
+    "pack": "tsc -p tsconfig.json && npm run copy-preload && vite build && electron-builder --dir",
+    "mcp:gpt-image2-studio": "node mcp/gpt-image2-studio.mjs"
   },
   "keywords": [
     "electron",
@@ -20,9 +22,11 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "@vitejs/plugin-react": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "^4.4.1"
   },
   "devDependencies": {
     "@types/node": "latest",
@@ -59,8 +63,12 @@
       ]
     },
     "nsis": {
+      "oneClick": false,
       "perMachine": true,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "GPT Image 2 Studio"
     }
   }
 }

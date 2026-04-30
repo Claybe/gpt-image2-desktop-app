@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { deflateSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +21,7 @@ Commands:
   generate --prompt <text> [--size 1024x1024|1024x1536|1536x1024|auto] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
 
 Examples:
-  node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-... --model gpt-image2
+  node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-... --model gpt-image-2
   node scripts/generate-image.mjs setup --use-settings
   node scripts/generate-image.mjs generate --prompt "a glass dragon" --size auto --param quality=high
 `;
@@ -164,33 +165,65 @@ async function writeConfig(configPath, config) {
   }
 }
 
-function escapeXml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
+const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  return value >>> 0;
+});
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function createPlaceholder(outputDir, width, height, prompt) {
-  await fs.mkdir(outputDir, { recursive: true });
-  const filePath = path.join(outputDir, `placeholder-${Date.now()}-${width}x${height}.svg`);
-  const shortPrompt = prompt.length > 120 ? `${prompt.slice(0, 117)}...` : prompt;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <defs>
-    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
-      <stop offset="0%" stop-color="#e5e7eb"/>
-      <stop offset="100%" stop-color="#cbd5e1"/>
-    </linearGradient>
-  </defs>
-  <rect width="100%" height="100%" fill="url(#bg)"/>
-  <rect x="24" y="24" width="${width - 48}" height="${height - 48}" fill="none" stroke="#64748b" stroke-width="4" stroke-dasharray="18 14"/>
-  <text x="50%" y="45%" text-anchor="middle" font-family="Arial, sans-serif" font-size="42" fill="#334155">Generating image...</text>
-  <text x="50%" y="52%" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#475569">${width} × ${height}</text>
-  <text x="50%" y="59%" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#64748b">${escapeXml(shortPrompt)}</text>
-</svg>
-`;
-  await fs.writeFile(filePath, svg, 'utf8');
+function pngChunk(type, data) {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBuffer.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 8 + data.length);
+  return chunk;
+}
+
+function createPlaceholderPng(width, height) {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 6;
+
+  const stride = width * 4 + 1;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * stride;
+    raw[row] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const offset = row + 1 + x * 4;
+      const border = x < 24 || y < 24 || x >= width - 24 || y >= height - 24;
+      raw[offset] = border ? 100 : 226;
+      raw[offset + 1] = border ? 116 : 232;
+      raw[offset + 2] = border ? 139 : 240;
+      raw[offset + 3] = 255;
+    }
+  }
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', deflateSync(raw)),
+    pngChunk('IEND', Buffer.alloc(0))
+  ]);
+}
+
+async function createPlaceholder(filePath, width, height) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, createPlaceholderPng(width, height));
   return filePath;
 }
 
@@ -309,23 +342,23 @@ async function updateImageIndex(indexPath, entry) {
   await fs.writeFile(indexPath, `${JSON.stringify(nextIndex, null, 2)}\n`, 'utf8');
 }
 
-async function saveGeneratedImage(outputDir, image, placeholderPath, outputFilePath) {
-  await fs.mkdir(outputDir, { recursive: true });
+function getDefaultGeneratedPath(outputDir) {
+  return path.join(outputDir, `generated-${Date.now()}.png`);
+}
+
+async function saveGeneratedImage(image, generatedPath, placeholderPath) {
+  await fs.mkdir(path.dirname(generatedPath), { recursive: true });
   if (image.type === 'base64') {
-    const filePath = outputFilePath || path.join(outputDir, `generated-${Date.now()}.png`);
-    await fs.writeFile(filePath, Buffer.from(image.value, 'base64'));
-    return filePath;
+    await fs.writeFile(generatedPath, Buffer.from(image.value, 'base64'));
+    return generatedPath;
   }
 
   const response = await fetch(image.value);
   if (!response.ok) {
     throw new Error(`图片 URL 下载失败：HTTP ${response.status}\n占位图保留在：${placeholderPath}`);
   }
-  const contentType = response.headers.get('content-type') || 'image/png';
-  const extension = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
-  const filePath = outputFilePath || path.join(outputDir, `generated-${Date.now()}.${extension}`);
-  await fs.writeFile(filePath, Buffer.from(await response.arrayBuffer()));
-  return filePath;
+  await fs.writeFile(generatedPath, Buffer.from(await response.arrayBuffer()));
+  return generatedPath;
 }
 
 async function setup(args) {
@@ -400,7 +433,7 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
 }
 
 function buildInitializationGuide(configPath, missingFields) {
-  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /gi-setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 也可以选择直接使用项目 setting.json 里的 URL 和 Key：/gi-setup --use-settings\n4. 默认模型为 gpt-image2；如需覆盖可传入 model=<模型名>\n5. 运行：\n  /gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image2\n  node skill/generate-image/scripts/generate-image.mjs setup --use-settings\n\n配置将保存到：${configPath}\n临时文件默认保存在：${DEFAULT_OUTPUT_DIR}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
+  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /gi-setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 也可以选择直接使用项目 setting.json 里的 URL 和 Key：/gi-setup --use-settings\n4. 默认模型为 gpt-image-2；如需覆盖可传入 model=<模型名>\n5. 运行：\n  /gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image-2\n  node skill/generate-image/scripts/generate-image.mjs setup --use-settings\n\n配置将保存到：${configPath}\n临时文件默认保存在：${DEFAULT_OUTPUT_DIR}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
 }
 
 function assertConfigured(configPath, apiBaseUrl, apiKey) {
@@ -430,7 +463,9 @@ async function generate(args) {
   const size = normalizeSize(args.size || naturalOptions.size || 'auto');
   const model = normalizeModel(args.model || naturalOptions.model || config.model);
   const output = resolveOutputPaths(args.output || naturalOptions.output, args['output-file'] || naturalOptions.outputFile);
-  const placeholderPath = await createPlaceholder(output.outputDir, size.width, size.height, prompt);
+  const generatedPath = output.generatedPath || getDefaultGeneratedPath(output.outputDir);
+  const placeholderPath = generatedPath;
+  await createPlaceholder(placeholderPath, size.width, size.height);
   const indexPath = path.resolve(args.index || naturalOptions.index || getDefaultIndexPath(output.outputDir));
   console.log(`占位图已生成：${placeholderPath}`);
 
@@ -485,9 +520,8 @@ async function generate(args) {
     await fail('图片生成失败：响应中没有 b64_json 或 url。');
   }
 
-  let generatedPath;
   try {
-    generatedPath = await saveGeneratedImage(output.outputDir, image, placeholderPath, output.generatedPath);
+    await saveGeneratedImage(image, generatedPath, placeholderPath);
   } catch (error) {
     await fail(error.message || String(error));
   }
@@ -498,7 +532,7 @@ async function generate(args) {
     completedAt: new Date().toISOString()
   };
   await updateImageIndex(indexPath, indexEntry);
-  console.log(`图片生成完成：${generatedPath}`);
+  console.log(`图片生成完成并已覆盖占位图：${generatedPath}`);
   console.log(`索引已更新：${indexPath}`);
   console.log(`耗时：${((Date.now() - startedAt) / 1000).toFixed(1)} 秒`);
   console.log(JSON.stringify({ placeholderPath, generatedPath, indexPath, endpoint, model, size: size.apiSize }, null, 2));

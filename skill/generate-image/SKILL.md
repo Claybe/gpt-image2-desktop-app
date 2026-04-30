@@ -102,11 +102,11 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 ### 输出行为
 
-- 占位图：`placeholder-<timestamp>-<width>x<height>.svg`
-- 生成图：`generated-<timestamp>.png|jpg|webp`，或 `--output-file` / 文件型 `--output` 指定路径
+- PNG 占位图：先写入最终图片路径
+- 生成图：生成成功后用真实图片覆盖同一路径，路径来自 `generated-<timestamp>.png` 或 `--output-file` / 文件型 `--output` 指定路径
 - 索引字典：默认 `<输出目录>/image-index.json`
 
-索引键为图片路径；值包含 `prompt`、`placeholderPath`、`generatedPath`、`result`、`model`、`size`、`params` 和时间戳。失败时会记录错误，并保留占位图。
+索引键为图片路径；成功时 `placeholderPath` 与 `generatedPath` 相同，值包含 `prompt`、`placeholderPath`、`generatedPath`、`result`、`model`、`size`、`params` 和时间戳。失败时会记录错误，并在同一路径保留占位图。
 
 ### 安全注意事项
 
@@ -210,11 +210,11 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 ### Output behavior
 
-- Placeholder: `placeholder-<timestamp>-<width>x<height>.svg`
-- Generated image: `generated-<timestamp>.png|jpg|webp`, or the path specified by `--output-file` / file-style `--output`
+- PNG placeholder: first written to the final image path
+- Generated image: on success, the real image overwrites the same path from `generated-<timestamp>.png` or the path specified by `--output-file` / file-style `--output`
 - Index dictionary: defaults to `<output directory>/image-index.json`
 
-The index key is the image path. Values include `prompt`, `placeholderPath`, `generatedPath`, `result`, `model`, `size`, `params`, and timestamps. On failure, the error is recorded and the placeholder is kept.
+The index key is the image path. On success, `placeholderPath` and `generatedPath` are the same path. Values include `prompt`, `placeholderPath`, `generatedPath`, `result`, `model`, `size`, `params`, and timestamps. On failure, the error is recorded and the placeholder remains at that same path.
 
 ### Security notes
 
