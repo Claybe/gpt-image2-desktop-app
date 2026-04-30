@@ -4,6 +4,7 @@
   "private": true,
   "description": "Claude Code skills for GPT Image 2 Studio",
   "skills": [
-    "skill/generate-image"
+    "skill/gi",
+    "skill/gi-setup"
   ]
 }

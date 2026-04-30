@@ -1,0 +1,41 @@
+{
+  "skill_name": "generate-image",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/gi-setup url=https://api.example.com/v1 apikey=sk-test model=gpt-image2",
+      "expected_output": "Agent extracts url/apikey/model through /gi-setup and sets up the config without exposing the key in summaries.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "/gi 一张 1536x1024 的赛博朋克城市夜景，quality=high",
+      "expected_output": "Agent parses natural-language prompt, size, and passthrough quality parameter, creates a same-resolution placeholder first, then launches the painter background subagent for generation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "/gi --prompt \"minimal product photo of a glass cup\" --size 1024x1536 --model gpt-image-2 --param background=transparent",
+      "expected_output": "Agent preserves explicit CLI-style parameters and reports generated image path or clear failure.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "/gi --prompt \"neon robot portrait\" --size 1024x1024 --output-file ./.claybe/.generate-image/robot.png --index ./.claybe/.generate-image/image-index.json",
+      "expected_output": "Agent creates the placeholder, launches a background subagent named painter to run generation, saves the final image to the requested file path, and updates the image-index dictionary with prompt, image path, and generation result.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "/gi a watercolor dragon, size 1024x1024",
+      "expected_output": "When no URL or API key is configured, Agent automatically enters the /gi-setup flow and guides the user step by step by asking for URL, key, whether to keep the default gpt-image2 model, or whether to use project setting.json instead of returning a vague failure.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "/gi-setup --use-settings",
+      "expected_output": "Agent allows setup to use URL and API key from the project setting.json and calls the helper with --use-settings without exposing the key in summaries.",
+      "files": []
+    }
+  ]
+}
