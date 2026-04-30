@@ -314,9 +314,16 @@ textarea {
   background: rgba(2, 6, 23, 0.5);
 }
 
+.queue-thumb-column {
+  grid-row: 1 / span 5;
+  display: grid;
+  gap: 7px;
+  justify-items: center;
+  width: 78px;
+}
+
 .queue-thumb-wrap {
   position: relative;
-  grid-row: 1 / span 5;
   width: 78px;
   height: 78px;
 }
@@ -425,13 +432,13 @@ textarea {
 }
 
 .queue-item-actions {
-  grid-column: 2 / 4;
   display: flex;
-  gap: 8px;
-  justify-content: flex-start;
+  gap: 6px;
+  justify-content: center;
 }
 
 .context-action-button {
+  position: relative;
   justify-self: start;
   padding: 7px 10px;
   color: #dbeafe;
@@ -452,6 +459,32 @@ textarea {
 .context-action-button.secondary {
   color: #e0e7ff;
   background: rgba(79, 70, 229, 0.72);
+}
+
+.context-action-button[data-tip]:hover::after {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  left: 50%;
+  width: max-content;
+  max-width: 120px;
+  padding: 4px 7px;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  content: attr(data-tip);
+  background: rgba(15, 23, 42, 0.96);
+  transform: translateX(-50%);
+  animation: tip-delay 1s step-end forwards;
+  opacity: 0;
+}
+
+@keyframes tip-delay {
+  to {
+    opacity: 1;
+  }
 }
 
 .context-action-button:hover:not(:disabled) {

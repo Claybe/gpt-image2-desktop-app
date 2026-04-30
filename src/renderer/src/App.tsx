@@ -872,7 +872,7 @@ function App() {
       return;
     }
 
-    setQueue((current) => [...current, item]);
+    setQueue((current) => [item, ...current]);
     setSelectedQueueItemId(item.id);
     setResultImage(undefined);
     setResultImageStatus(undefined);
@@ -1038,25 +1038,33 @@ function App() {
                   >
                     {isQueueSelecting && <span className="queue-check">{selectedQueueIds.includes(item.id) ? '已选' : '选择'}</span>}
                     {thumbnail ? (
-                      <span className="queue-thumb-wrap">
-                        <img
-                          className="queue-thumb"
-                          src={thumbnail}
-                          alt="任务缩略图"
-                          onLoad={() => item.resultImage && markResultImageLoaded(item.id)}
-                          onError={() => item.resultImage && markResultImageFailed(item.id)}
-                        />
-                        {item.status === 'generating' && item.generationPreviewImage && <span className="image-load-badge">草稿 {item.generationPartialCount ?? 1}</span>}
-                        {item.status === 'downloading' && <span className="image-load-badge">{item.imageDownloadProgress ?? 0}% · {formatSpeed(item.imageDownloadSpeed)}</span>}
-                        {item.status === 'failed' && !isQueueSelecting && (
-                          <button
-                            className="retry-thumb-button"
-                            type="button"
-                            onClick={(event) => { event.stopPropagation(); retryQueueItem(item); }}
-                            aria-label="重试任务"
-                          >
-                            ↻
-                          </button>
+                      <span className="queue-thumb-column">
+                        <span className="queue-thumb-wrap">
+                          <img
+                            className="queue-thumb"
+                            src={thumbnail}
+                            alt="任务缩略图"
+                            onLoad={() => item.resultImage && markResultImageLoaded(item.id)}
+                            onError={() => item.resultImage && markResultImageFailed(item.id)}
+                          />
+                          {item.status === 'generating' && item.generationPreviewImage && <span className="image-load-badge">草稿 {item.generationPartialCount ?? 1}</span>}
+                          {item.status === 'downloading' && <span className="image-load-badge">{item.imageDownloadProgress ?? 0}% · {formatSpeed(item.imageDownloadSpeed)}</span>}
+                          {item.status === 'failed' && !isQueueSelecting && (
+                            <button
+                              className="retry-thumb-button"
+                              type="button"
+                              onClick={(event) => { event.stopPropagation(); retryQueueItem(item); }}
+                              aria-label="重试任务"
+                            >
+                              ↻
+                            </button>
+                          )}
+                        </span>
+                        {item.status === 'done' && item.resultImage && !isQueueSelecting && (
+                          <span className="queue-item-actions">
+                            <button className="context-action-button icon" type="button" data-tip="填入参考图" aria-label="填入参考图" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>↙</button>
+                            <button className="context-action-button icon secondary" type="button" data-tip="复制提示词" aria-label="复制提示词" onClick={(event) => { event.stopPropagation(); void copyPromptFromQueueItem(item); }}>⧉</button>
+                          </span>
                         )}
                       </span>
                     ) : item.status === 'failed' && !isQueueSelecting ? (
@@ -1078,12 +1086,6 @@ function App() {
                     <p>{item.prompt}</p>
                     <small>{formatQueueActivity(item)}</small>
                     {item.error && <em>{item.error}</em>}
-                    {item.status === 'done' && item.resultImage && !isQueueSelecting && (
-                      <div className="queue-item-actions">
-                        <button className="context-action-button icon" type="button" title="填入参考图" aria-label="填入参考图" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>↙</button>
-                        <button className="context-action-button icon secondary" type="button" title="复制提示词" aria-label="复制提示词" onClick={(event) => { event.stopPropagation(); void copyPromptFromQueueItem(item); }}>⧉</button>
-                      </div>
-                    )}
                   </div>
                 );
               })}
