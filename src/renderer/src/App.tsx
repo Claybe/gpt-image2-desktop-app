@@ -271,7 +271,7 @@ function App() {
     }
   });
   const [prompt, setPrompt] = useState('');
-  const [size, setSize] = useState<ImageSize>('1024x1024');
+  const [size, setSize] = useState<ImageSize>('auto');
   const [referenceImages, setReferenceImages] = useState<ImageAsset[]>([]);
   const [selectedReferenceIndex, setSelectedReferenceIndex] = useState(0);
   const [brushSize, setBrushSize] = useState(36);
