@@ -8,7 +8,7 @@
 
 ### 命令
 
-- `/gi-setup`：分步设置 API URL、API Key，默认参数为 `auto`；也可选择直接读取项目 `setting.json`。
+- `/gi-setup`：分步设置 API URL、API Key，默认模型为 `gpt-image2`；也可选择直接读取项目 `setting.json`。
 - `/gi`：输入提示词和参数，生成图片。
 
 ### npx skills 安装
@@ -30,13 +30,13 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 ### setup 示例
 
 ```text
-/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
+/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image2
 ```
 
 内部执行：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
+node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image2
 ```
 
 ### gi-setup 使用 setting.json
@@ -65,11 +65,11 @@ node skill/generate-image/scripts/generate-image.mjs setup --use-settings --sett
 
 1. 请输入你的 URL（API Base URL）
 2. 请输入你的 Key（API Key）
-3. 默认参数为 `auto`，如需覆盖可提供其他 model
+3. 默认模型为 `gpt-image2`，如需覆盖可提供其他 model
 4. 也可以选择直接使用项目 `setting.json` 里的 URL 和 Key
 
 ```text
-/gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto
+/gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image2
 /gi-setup --use-settings
 ```
 
@@ -97,7 +97,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 | --- | --- | --- |
 | prompt | 是 | 图片提示词 |
 | size | 否 | `1024x1024`、`1024x1536`、`1536x1024`、`auto` |
-| model | 否 | 默认 `auto` |
+| model | 否 | 默认 `gpt-image2` |
 | url | 否 | 覆盖初始化 URL |
 | apikey | 否 | 覆盖初始化 API Key |
 | output | 否 | 输出目录；如果值以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终图片文件路径 |
@@ -135,7 +135,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Commands
 
-- `/gi-setup`: configure API URL and API key step by step; the default parameter is `auto`; can also read the project `setting.json`.
+- `/gi-setup`: configure API URL and API key step by step; the default model is `gpt-image2`; can also read the project `setting.json`.
 - `/gi`: generate an image from a prompt and parameters.
 
 ### Install with npx skills
@@ -157,13 +157,13 @@ Restart Claude Code or open a new session after installation.
 ### Setup example
 
 ```text
-/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
+/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image2
 ```
 
 Internal command:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
+node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image2
 ```
 
 ### Use setting.json with gi-setup
@@ -192,11 +192,11 @@ If `/gi` is used before URL or API key configuration exists, the skill automatic
 
 1. Please enter your URL (API Base URL)
 2. Please enter your Key (API Key)
-3. The default parameter is `auto`; provide another model only if needed
+3. The default model is `gpt-image2`; provide another model only if needed
 4. Or choose to use URL and Key directly from the project `setting.json`
 
 ```text
-/gi-setup url=<your API Base URL> apikey=<your API Key> model=auto
+/gi-setup url=<your API Base URL> apikey=<your API Key> model=gpt-image2
 /gi-setup --use-settings
 ```
 
@@ -224,7 +224,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 | --- | --- | --- |
 | prompt | Yes | Image prompt |
 | size | No | `1024x1024`, `1024x1536`, `1536x1024`, or `auto` |
-| model | No | Defaults to `auto` |
+| model | No | Defaults to `gpt-image2` |
 | url | No | Overrides configured URL |
 | apikey | No | Overrides configured API key |
 | output | No | Output directory; if the value ends with `.png`, `.jpg`, `.jpeg`, or `.webp`, it is treated as the final image file path |

@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "/gi-setup url=https://api.example.com/v1 apikey=sk-test model=auto",
+      "prompt": "/gi-setup url=https://api.example.com/v1 apikey=sk-test model=gpt-image2",
       "expected_output": "Agent extracts url/apikey/model through /gi-setup and sets up the config without exposing the key in summaries.",
       "files": []
     },
@@ -28,7 +28,7 @@
     {
       "id": 5,
       "prompt": "/gi a watercolor dragon, size 1024x1024",
-      "expected_output": "When no URL or API key is configured, Agent automatically enters the /gi-setup flow and guides the user step by step by asking for URL, key, whether to keep the default auto parameter, or whether to use project setting.json instead of returning a vague failure.",
+      "expected_output": "When no URL or API key is configured, Agent automatically enters the /gi-setup flow and guides the user step by step by asking for URL, key, whether to keep the default gpt-image2 model, or whether to use project setting.json instead of returning a vague failure.",
       "files": []
     },
     {

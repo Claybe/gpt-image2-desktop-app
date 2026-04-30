@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.claude', 'generate-image', 'config.json');
 const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), '.claybe', '.generate-image');
 const DEFAULT_SETTINGS_PATH = path.join(process.cwd(), 'setting.json');
+const DEFAULT_MODEL = 'gpt-image2';
 const SIZE_RE = /^(\d+)x(\d+)$/;
 
 function usage() {
@@ -19,9 +20,9 @@ Commands:
   generate --prompt <text> [--size 1024x1024|1024x1536|1536x1024|auto] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
 
 Examples:
-  node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-...
+  node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-... --model gpt-image2
   node scripts/generate-image.mjs setup --use-settings
-  node scripts/generate-image.mjs generate --prompt "a glass dragon" --size 1024x1536 --param quality=high
+  node scripts/generate-image.mjs generate --prompt "a glass dragon" --size auto --param quality=high
 `;
 }
 
@@ -70,6 +71,10 @@ function coerceValue(value) {
   } catch {
     return value;
   }
+}
+
+function normalizeModel(model) {
+  return !model || model === 'auto' ? DEFAULT_MODEL : model;
 }
 
 function normalizeBaseUrl(url) {
@@ -236,7 +241,7 @@ async function setup(args) {
   const nextConfig = {
     apiBaseUrl: normalizeBaseUrl(args.url || settingsConfig.apiBaseUrl),
     apiKey: args.apikey || args['api-key'] || settingsConfig.apiKey,
-    model: args.model || settingsConfig.model || 'auto'
+    model: normalizeModel(args.model || settingsConfig.model)
   };
 
   if (!nextConfig.apiKey) {
@@ -300,7 +305,7 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
 }
 
 function buildInitializationGuide(configPath, missingFields) {
-  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /gi-setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 也可以选择直接使用项目 setting.json 里的 URL 和 Key：/gi-setup --use-settings\n4. 默认参数为 auto；如需覆盖可传入 model=<模型名>\n5. 运行：\n  /gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model auto\n  node skill/generate-image/scripts/generate-image.mjs setup --use-settings\n\n配置将保存到：${configPath}\n临时文件默认保存在：${DEFAULT_OUTPUT_DIR}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
+  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /gi-setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 也可以选择直接使用项目 setting.json 里的 URL 和 Key：/gi-setup --use-settings\n4. 默认模型为 gpt-image2；如需覆盖可传入 model=<模型名>\n5. 运行：\n  /gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image2\n  node skill/generate-image/scripts/generate-image.mjs setup --use-settings\n\n配置将保存到：${configPath}\n临时文件默认保存在：${DEFAULT_OUTPUT_DIR}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
 }
 
 function assertConfigured(configPath, apiBaseUrl, apiKey) {
@@ -328,7 +333,7 @@ async function generate(args) {
   const apiBaseUrl = normalizeBaseUrl(candidateApiBaseUrl);
 
   const size = normalizeSize(args.size || naturalOptions.size || 'auto');
-  const model = args.model || naturalOptions.model || config.model || 'auto';
+  const model = normalizeModel(args.model || naturalOptions.model || config.model);
   const output = resolveOutputPaths(args.output || naturalOptions.output, args['output-file'] || naturalOptions.outputFile);
   const placeholderPath = await createPlaceholder(output.outputDir, size.width, size.height, prompt);
   const indexPath = path.resolve(args.index || naturalOptions.index || getDefaultIndexPath(output.outputDir));
