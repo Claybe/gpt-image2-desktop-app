@@ -11,9 +11,12 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 const IMAGE_SIZES: ImageSize[] = ['1024x1024', '1024x1536', '1536x1024', 'auto'];
 const QUEUE_STORAGE_KEY = 'gpt-image2-queue';
+const MAX_QUEUE_STORAGE_CHARS = 5_000_000;
+const MAX_PERSISTED_QUEUE_ITEMS = 50;
 
 type BrushMode = 'draw' | 'erase';
-type QueueStatus = 'running' | 'done' | 'failed';
+type QueueStatus = 'generating' | 'downloading' | 'done' | 'failed';
+type ImageLoadStatus = 'loading' | 'loaded' | 'failed';
 
 interface QueueItem {
   id: string;
@@ -28,6 +31,11 @@ interface QueueItem {
   createdAt: string;
   error?: string;
   resultImage?: string;
+  imageLoadStatus?: ImageLoadStatus;
+  imageDownloadProgress?: number;
+  imageDownloadSpeed?: number;
+  generatedSeconds: number;
+  downloadSeconds: number;
   elapsedSeconds: number;
 }
 
@@ -52,9 +60,44 @@ function formatClock(date = new Date()) {
 }
 
 function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60);
-  const restSeconds = seconds % 60;
+  const normalizedSeconds = Number.isFinite(seconds) ? Math.max(seconds, 0) : 0;
+  if (normalizedSeconds > 0 && normalizedSeconds < 1) {
+    return `${normalizedSeconds.toFixed(1)}秒`;
+  }
+
+  const wholeSeconds = Math.floor(normalizedSeconds);
+  const minutes = Math.floor(wholeSeconds / 60);
+  const restSeconds = wholeSeconds % 60;
   return minutes > 0 ? `${minutes}分${restSeconds}秒` : `${restSeconds}秒`;
+}
+
+function formatMilliseconds(milliseconds: number) {
+  const normalizedMilliseconds = Number.isFinite(milliseconds) ? Math.max(milliseconds, 0) : 0;
+  return `${(normalizedMilliseconds / 1000).toFixed(2)}秒`;
+}
+
+function formatSpeed(bytesPerSecond = 0) {
+  if (bytesPerSecond >= 1024 * 1024) {
+    return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  }
+
+  if (bytesPerSecond >= 1024) {
+    return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  }
+
+  return `${Math.round(bytesPerSecond)} B/s`;
+}
+
+function formatTaskDurations(item: QueueItem) {
+  if (item.status === 'generating') {
+    return `生成 ${formatDuration(item.generatedSeconds || item.elapsedSeconds)}`;
+  }
+
+  if (item.status === 'downloading') {
+    return `生成 ${formatDuration(item.generatedSeconds)} · 下载 ${formatDuration(item.downloadSeconds)}`;
+  }
+
+  return `生成 ${formatDuration(item.generatedSeconds || item.elapsedSeconds)} · 下载 ${formatDuration(item.downloadSeconds)}`;
 }
 
 async function loadImage(dataUrl: string): Promise<HTMLImageElement> {
@@ -103,7 +146,7 @@ async function createMaskAsset(dataUrl: string, mode: MaskMode): Promise<ImageAs
 }
 
 function normalizeQueueItem(item: Partial<QueueItem>): QueueItem {
-  const status = item.status === 'done' || item.status === 'failed' || item.status === 'running' ? item.status : 'failed';
+  const status = item.status === 'done' || item.status === 'failed' || item.status === 'generating' || item.status === 'downloading' ? item.status : 'failed';
   return {
     id: item.id ?? crypto.randomUUID(),
     prompt: item.prompt ?? '',
@@ -113,12 +156,49 @@ function normalizeQueueItem(item: Partial<QueueItem>): QueueItem {
     maskSourceDataUrl: item.maskSourceDataUrl,
     maskMode: item.maskMode,
     parentTaskId: item.parentTaskId,
-    status: status === 'running' ? 'failed' : status,
+    status: status === 'generating' || status === 'downloading' ? 'failed' : status,
     createdAt: item.createdAt ?? formatClock(),
-    error: status === 'running' ? '应用重启后任务已停止，请重新生成' : item.error,
+    error: status === 'generating' || status === 'downloading' ? '应用重启后任务已停止，请重新生成' : item.error,
     resultImage: item.resultImage,
-    elapsedSeconds: item.elapsedSeconds ?? 0
+    imageLoadStatus: item.resultImage ? (item.imageLoadStatus === 'failed' ? 'failed' : 'loaded') : undefined,
+    imageDownloadProgress: typeof item.imageDownloadProgress === 'number' ? item.imageDownloadProgress : (item.resultImage ? 100 : undefined),
+    imageDownloadSpeed: typeof item.imageDownloadSpeed === 'number' ? item.imageDownloadSpeed : 0,
+    generatedSeconds: item.generatedSeconds ?? item.elapsedSeconds ?? 0,
+    downloadSeconds: item.downloadSeconds ?? 0,
+    elapsedSeconds: item.elapsedSeconds ?? ((item.generatedSeconds ?? 0) + (item.downloadSeconds ?? 0))
   };
+}
+
+function serializeQueueForStorage(queue: QueueItem[]): string {
+  let persistedQueue = queue.slice(-MAX_PERSISTED_QUEUE_ITEMS);
+  let serialized = JSON.stringify(persistedQueue);
+
+  while (serialized.length > MAX_QUEUE_STORAGE_CHARS && persistedQueue.length > 0) {
+    persistedQueue = persistedQueue.slice(1);
+    serialized = JSON.stringify(persistedQueue);
+  }
+
+  return serialized;
+}
+
+function loadPersistedQueue(): QueueItem[] {
+  const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
+  if (!saved) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(saved) as Array<Partial<QueueItem>>;
+    if (!Array.isArray(parsed)) {
+      localStorage.removeItem(QUEUE_STORAGE_KEY);
+      return [];
+    }
+
+    return parsed.map(normalizeQueueItem);
+  } catch {
+    localStorage.removeItem(QUEUE_STORAGE_KEY);
+    return [];
+  }
 }
 
 function App() {
@@ -128,6 +208,8 @@ function App() {
   const queueRef = useRef<QueueItem[]>([]);
   const timersRef = useRef<Record<string, number>>({});
   const startTimesRef = useRef<Record<string, number>>({});
+  const downloadTimersRef = useRef<Record<string, number>>({});
+  const downloadStartTimesRef = useRef<Record<string, number>>({});
   const selectedQueueItemIdRef = useRef<string | undefined>(undefined);
   const pendingMaskDataUrlRef = useRef<string | undefined>(undefined);
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -154,26 +236,9 @@ function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [maskDataUrl, setMaskDataUrl] = useState<string>();
   const [resultImage, setResultImage] = useState<string>();
+  const [resultImageStatus, setResultImageStatus] = useState<ImageLoadStatus>();
   const [status, setStatus] = useState('准备就绪');
-  const [queue, setQueueState] = useState<QueueItem[]>(() => {
-    const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
-    if (!saved) {
-      return [];
-    }
-
-    try {
-      const parsed = JSON.parse(saved) as Array<Partial<QueueItem>>;
-      if (!Array.isArray(parsed)) {
-        localStorage.removeItem(QUEUE_STORAGE_KEY);
-        return [];
-      }
-
-      return parsed.map(normalizeQueueItem);
-    } catch {
-      localStorage.removeItem(QUEUE_STORAGE_KEY);
-      return [];
-    }
-  });
+  const [queue, setQueueState] = useState<QueueItem[]>(loadPersistedQueue);
   const [selectedQueueItemId, setSelectedQueueItemId] = useState<string>();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [previewImage, setPreviewImage] = useState<string>();
@@ -186,7 +251,7 @@ function App() {
 
   const selectedReference = referenceImages[selectedReferenceIndex];
   const selectedQueueItem = queue.find((item) => item.id === selectedQueueItemId);
-  const runningCount = queue.filter((item) => item.status === 'running').length;
+  const generatingCount = queue.filter((item) => item.status === 'generating').length;
   const contextResultItems = useMemo(() => {
     if (!selectedQueueItem) {
       return [];
@@ -225,12 +290,18 @@ function App() {
   }, [settings]);
 
   useEffect(() => {
-    localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
+    localStorage.setItem(QUEUE_STORAGE_KEY, serializeQueueForStorage(queue));
   }, [queue]);
 
   useEffect(() => {
+    const unsubscribeDownloadProgress = window.desktopApi?.onImageDownloadProgress?.(({ itemId, progress, bytesPerSecond }) => {
+      updateQueueDownloadProgress(itemId, progress, bytesPerSecond);
+    });
+
     return () => {
+      unsubscribeDownloadProgress?.();
       Object.values(timersRef.current).forEach((timer) => window.clearInterval(timer));
+      Object.values(downloadTimersRef.current).forEach((timer) => window.clearInterval(timer));
     };
   }, []);
 
@@ -316,8 +387,10 @@ function App() {
       maskSourceDataUrl: maskDataUrl,
       maskMode,
       parentTaskId: contextSourceTaskId,
-      status: 'running',
+      status: 'generating',
       createdAt: formatClock(),
+      generatedSeconds: 0,
+      downloadSeconds: 0,
       elapsedSeconds: 0
     };
   }
@@ -338,16 +411,22 @@ function App() {
     return window.desktopApi.generateImage(request);
   }
 
-  function startTaskTimer(itemId: string) {
+  function startTaskTimer(itemId: string, promptText: string) {
     startTimesRef.current[itemId] = Date.now();
+    setStatus(`正在提交生成请求：${promptText.slice(0, 24)}`);
     timersRef.current[itemId] = window.setInterval(() => {
       const elapsedSeconds = Math.floor((Date.now() - startTimesRef.current[itemId]) / 1000);
+      const stageText = elapsedSeconds < 10 ? '正在提交请求' : elapsedSeconds < 60 ? '模型生成初稿中' : '等待接口返回结果';
       setQueue((current) => current.map((item) => item.id === itemId ? { ...item, elapsedSeconds } : item));
+      if (selectedQueueItemIdRef.current === itemId) {
+        setStatus(`${stageText}：${promptText.slice(0, 24)} · ${formatDuration(elapsedSeconds)}`);
+      }
     }, 1000);
   }
 
   function stopTaskTimer(itemId: string) {
-    const elapsedSeconds = Math.floor((Date.now() - startTimesRef.current[itemId]) / 1000);
+    const startedAt = startTimesRef.current[itemId] ?? Date.now();
+    const elapsedSeconds = Math.max(Math.floor((Date.now() - startedAt) / 1000), 0);
     if (timersRef.current[itemId]) {
       window.clearInterval(timersRef.current[itemId]);
       delete timersRef.current[itemId];
@@ -357,26 +436,123 @@ function App() {
     return elapsedSeconds;
   }
 
+  function startDownloadTimer(itemId: string) {
+    downloadStartTimesRef.current[itemId] = Date.now();
+    downloadTimersRef.current[itemId] = window.setInterval(() => {
+      const downloadSeconds = Math.max((Date.now() - downloadStartTimesRef.current[itemId]) / 1000, 0.1);
+      setQueue((current) => current.map((item) => item.id === itemId ? { ...item, downloadSeconds, elapsedSeconds: item.generatedSeconds + downloadSeconds } : item));
+    }, 200);
+  }
+
+  function stopDownloadTimer(itemId: string) {
+    const downloadSeconds = Math.max((Date.now() - downloadStartTimesRef.current[itemId]) / 1000, 0.1);
+    if (downloadTimersRef.current[itemId]) {
+      window.clearInterval(downloadTimersRef.current[itemId]);
+      delete downloadTimersRef.current[itemId];
+    }
+
+    delete downloadStartTimesRef.current[itemId];
+    return downloadSeconds;
+  }
+
+  function updateQueueDownloadProgress(itemId: string, progress: number, bytesPerSecond = 0) {
+    const downloadSeconds = downloadStartTimesRef.current[itemId] ? Math.max((Date.now() - downloadStartTimesRef.current[itemId]) / 1000, 0.1) : undefined;
+    setQueue((current) => current.map((queueItem) => {
+      if (queueItem.id !== itemId) {
+        return queueItem;
+      }
+
+      return {
+        ...queueItem,
+        imageDownloadProgress: progress,
+        imageDownloadSpeed: bytesPerSecond,
+        downloadSeconds: downloadSeconds ?? queueItem.downloadSeconds,
+        elapsedSeconds: queueItem.generatedSeconds + (downloadSeconds ?? queueItem.downloadSeconds)
+      };
+    }));
+  }
+
+  function updateQueueImageLoadStatus(itemId: string, imageLoadStatus: ImageLoadStatus) {
+    setQueue((current) => current.map((queueItem) => {
+      if (queueItem.id !== itemId) {
+        return queueItem;
+      }
+
+      if (imageLoadStatus === 'loaded') {
+        return { ...queueItem, status: 'done', imageLoadStatus, imageDownloadProgress: 100 };
+      }
+
+      if (imageLoadStatus === 'failed') {
+        return { ...queueItem, status: 'failed', imageLoadStatus, imageDownloadProgress: undefined, error: queueItem.error ?? '图片下载失败' };
+      }
+
+      return { ...queueItem, imageLoadStatus };
+    }));
+  }
+
+  function markResultImageLoaded(itemId: string) {
+    updateQueueImageLoadStatus(itemId, 'loaded');
+    if (selectedQueueItemIdRef.current === itemId) {
+      setResultImageStatus('loaded');
+    }
+  }
+
+  function markResultImageFailed(itemId: string) {
+    updateQueueImageLoadStatus(itemId, 'failed');
+    if (selectedQueueItemIdRef.current === itemId) {
+      setResultImageStatus('failed');
+    }
+  }
+
   async function executeQueueItem(item: QueueItem) {
-    startTaskTimer(item.id);
-    setStatus(`正在执行任务：${item.prompt.slice(0, 24)}`);
-    addLog('info', `开始任务：${item.prompt}`);
+    startTaskTimer(item.id, item.prompt);
+    addLog('info', `提交生成请求：${item.prompt}`);
 
     try {
       const result = await runQueueItem(item);
-      const elapsedSeconds = stopTaskTimer(item.id);
-      setQueue((current) => current.map((queueItem) => queueItem.id === item.id ? { ...queueItem, status: 'done', resultImage: result.imageDataUrl, elapsedSeconds } : queueItem));
+      const generatedSeconds = stopTaskTimer(item.id);
+      const timings = result.timings ?? {
+        requestStartedAt: new Date().toISOString(),
+        responseReceivedMs: generatedSeconds * 1000,
+        jsonParsedMs: 0,
+        totalMs: generatedSeconds * 1000,
+        requestedUrlOutput: false,
+        urlOutputFallback: false
+      };
+      const timingDetail = `请求到响应 ${formatMilliseconds(timings.responseReceivedMs)}，JSON 解析 ${formatMilliseconds(timings.jsonParsedMs)}，总计 ${formatMilliseconds(timings.totalMs)}`;
+      setQueue((current) => current.map((queueItem) => queueItem.id === item.id ? { ...queueItem, status: 'downloading', resultImage: undefined, imageLoadStatus: 'loading', imageDownloadProgress: 0, imageDownloadSpeed: 0, generatedSeconds, downloadSeconds: 0, elapsedSeconds: generatedSeconds } : queueItem));
       if (selectedQueueItemIdRef.current === item.id) {
-        setResultImage(result.imageDataUrl);
+        setResultImage(undefined);
+        setResultImageStatus('loading');
       }
-      setStatus(`任务完成，用时 ${formatDuration(elapsedSeconds)}`);
-      addLog('info', `任务完成：${item.prompt}，用时 ${formatDuration(elapsedSeconds)}`);
+      setStatus(`生成完成：${formatDuration(generatedSeconds)}，开始下载图片`);
+      addLog('info', `生成完成：${item.prompt}，${timingDetail}，返回 ${result.sourceType === 'url' ? 'URL' : 'base64'}${timings.urlOutputFallback ? '，URL 模式不支持已自动回退' : ''}`);
+
+      startDownloadTimer(item.id);
+      addLog('info', `开始下载图片：${result.sourceType === 'url' ? '远程 URL' : '接口已返回 data URL'}`);
+      const imageDataUrl = await window.desktopApi.downloadImage(result.imageSource, item.id);
+      const downloadSeconds = stopDownloadTimer(item.id);
+      setQueue((current) => current.map((queueItem) => queueItem.id === item.id ? { ...queueItem, resultImage: imageDataUrl, imageLoadStatus: 'loading', imageDownloadProgress: 100, downloadSeconds, elapsedSeconds: generatedSeconds + downloadSeconds } : queueItem));
+      if (selectedQueueItemIdRef.current === item.id) {
+        setResultImage(imageDataUrl);
+      }
+      setStatus(`下载完成：生成 ${formatDuration(generatedSeconds)}，下载 ${formatDuration(downloadSeconds)}`);
+      addLog('info', `下载完成：${item.prompt}，生成 ${formatDuration(generatedSeconds)}，下载 ${formatDuration(downloadSeconds)}`);
     } catch (error) {
-      const elapsedSeconds = stopTaskTimer(item.id);
+      const wasDownloading = Boolean(downloadStartTimesRef.current[item.id]);
+      const phaseSeconds = wasDownloading ? stopDownloadTimer(item.id) : stopTaskTimer(item.id);
       const message = error instanceof Error ? error.message : '图片生成失败';
-      setQueue((current) => current.map((queueItem) => queueItem.id === item.id ? { ...queueItem, status: 'failed', error: message, elapsedSeconds } : queueItem));
-      setStatus(`${message}，用时 ${formatDuration(elapsedSeconds)}`);
-      addLog('error', `${message}，用时 ${formatDuration(elapsedSeconds)}`);
+      setQueue((current) => current.map((queueItem) => {
+        if (queueItem.id !== item.id) {
+          return queueItem;
+        }
+
+        const generatedSeconds = wasDownloading ? queueItem.generatedSeconds : phaseSeconds;
+        const downloadSeconds = wasDownloading ? phaseSeconds : queueItem.downloadSeconds;
+        return { ...queueItem, status: 'failed', error: message, generatedSeconds, downloadSeconds, elapsedSeconds: generatedSeconds + downloadSeconds };
+      }));
+      setStatus(`${message}，${wasDownloading ? '下载' : '生成'}用时 ${formatDuration(phaseSeconds)}`);
+      addLog('error', `${message}，${wasDownloading ? '下载' : '生成'}用时 ${formatDuration(phaseSeconds)}`);
     }
   }
 
@@ -480,13 +656,17 @@ function App() {
 
   function clearQueue() {
     Object.values(timersRef.current).forEach((timer) => window.clearInterval(timer));
+    Object.values(downloadTimersRef.current).forEach((timer) => window.clearInterval(timer));
     timersRef.current = {};
     startTimesRef.current = {};
+    downloadTimersRef.current = {};
+    downloadStartTimesRef.current = {};
     setQueue(() => []);
     setSelectedQueueItemId(undefined);
     setSelectedQueueIds([]);
     setIsQueueSelecting(false);
     setResultImage(undefined);
+    setResultImageStatus(undefined);
     setPreviewImage(undefined);
     localStorage.removeItem(QUEUE_STORAGE_KEY);
   }
@@ -502,7 +682,12 @@ function App() {
         window.clearInterval(timersRef.current[id]);
         delete timersRef.current[id];
       }
+      if (downloadTimersRef.current[id]) {
+        window.clearInterval(downloadTimersRef.current[id]);
+        delete downloadTimersRef.current[id];
+      }
       delete startTimesRef.current[id];
+      delete downloadStartTimesRef.current[id];
     });
 
     setQueue((current) => current.filter((item) => !ids.has(item.id)));
@@ -511,6 +696,7 @@ function App() {
     if (selectedQueueItemId && ids.has(selectedQueueItemId)) {
       setSelectedQueueItemId(undefined);
       setResultImage(undefined);
+      setResultImageStatus(undefined);
       setPreviewImage(undefined);
     }
   }
@@ -545,6 +731,7 @@ function App() {
     setQueue((current) => [...current, item]);
     setSelectedQueueItemId(item.id);
     setResultImage(undefined);
+    setResultImageStatus(undefined);
     setContextSourceTaskId(undefined);
     setStatus('已创建任务，开始生成');
     void executeQueueItem(item);
@@ -558,12 +745,39 @@ function App() {
     setMaskDataUrl(item.maskSourceDataUrl ?? item.maskImage?.dataUrl);
     setMaskMode(item.maskMode ?? 'alpha');
     setResultImage(item.resultImage);
+    setResultImageStatus(item.resultImage ? (item.imageLoadStatus ?? 'loading') : undefined);
 
     if (item.error) {
-      setStatus(`${item.error}，用时 ${formatDuration(item.elapsedSeconds)}`);
+      setStatus(`${item.error}，${formatTaskDurations(item)}`);
+    } else if (item.status === 'downloading') {
+      setStatus(`下载中 ${item.imageDownloadProgress ?? 0}% · ${formatSpeed(item.imageDownloadSpeed)} · ${formatTaskDurations(item)}`);
     } else {
-      setStatus(`队列任务状态：${item.status}，用时 ${formatDuration(item.elapsedSeconds)}`);
+      setStatus(`队列任务状态：${item.status}，${formatTaskDurations(item)}`);
     }
+  }
+
+  function retryQueueItem(item: QueueItem) {
+    const retryItem: QueueItem = {
+      ...item,
+      status: 'generating',
+      error: undefined,
+      resultImage: undefined,
+      imageLoadStatus: undefined,
+      imageDownloadProgress: undefined,
+      imageDownloadSpeed: 0,
+      generatedSeconds: 0,
+      downloadSeconds: 0,
+      elapsedSeconds: 0
+    };
+
+    setQueue((current) => current.map((queueItem) => queueItem.id === item.id ? retryItem : queueItem));
+    if (selectedQueueItemIdRef.current === item.id) {
+      setResultImage(undefined);
+      setResultImageStatus(undefined);
+    }
+
+    setStatus('已重新开始任务');
+    void executeQueueItem(retryItem);
   }
 
   function handleQueueItemClick(item: QueueItem) {
@@ -628,7 +842,7 @@ function App() {
         </details>
         <label>图片尺寸<select value={size} onChange={(event) => setSize(event.target.value as ImageSize)}>{IMAGE_SIZES.map((value) => <option key={value}>{value}</option>)}</select></label>
         <label>生成提示词<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述希望生成或编辑的图片内容..." /></label>
-        <div className="timer-card">并发任务 <strong>{runningCount}</strong></div>
+        <div className="timer-card">生成中 <strong>{generatingCount}</strong></div>
 
         <div className="button-row">
           <button className="primary" disabled={!canSubmit} onClick={generateImage}>生成图片</button>
@@ -658,7 +872,60 @@ function App() {
             <div className="queue-list" ref={queueListRef}>
               {queue.map((item) => {
                 const thumbnail = item.resultImage ?? item.referenceImages?.[0]?.dataUrl ?? item.maskImage?.dataUrl;
-                return <div data-queue-id={item.id} className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}${selectedQueueIds.includes(item.id) ? ' selected' : ''}`} key={item.id} onClick={() => handleQueueItemClick(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleQueueItemClick(item); }} role="button" tabIndex={0}>{isQueueSelecting && <span className="queue-check">{selectedQueueIds.includes(item.id) ? '已选' : '选择'}</span>}{thumbnail ? <img className="queue-thumb" src={thumbnail} alt="任务缩略图" /> : <div className="queue-thumb queue-thumb-empty">无图</div>}<strong>{item.status}</strong><span>{item.createdAt}</span><p>{item.prompt}</p><small>用时 {formatDuration(item.elapsedSeconds)}</small>{item.error && <em>{item.error}</em>}{item.status === 'done' && item.resultImage && !isQueueSelecting && <button className="context-action-button" type="button" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>填入参考图</button>}</div>;
+                return (
+                  <div
+                    data-queue-id={item.id}
+                    className={`queue-item ${item.status}${item.id === selectedQueueItemId ? ' active' : ''}${selectedQueueIds.includes(item.id) ? ' selected' : ''}`}
+                    key={item.id}
+                    onClick={() => handleQueueItemClick(item)}
+                    onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') handleQueueItemClick(item); }}
+                    role="button"
+                    tabIndex={0}
+                  >
+                    {isQueueSelecting && <span className="queue-check">{selectedQueueIds.includes(item.id) ? '已选' : '选择'}</span>}
+                    {thumbnail ? (
+                      <span className="queue-thumb-wrap">
+                        <img
+                          className="queue-thumb"
+                          src={thumbnail}
+                          alt="任务缩略图"
+                          onLoad={() => item.resultImage && markResultImageLoaded(item.id)}
+                          onError={() => item.resultImage && markResultImageFailed(item.id)}
+                        />
+                        {item.status === 'downloading' && <span className="image-load-badge">{item.imageDownloadProgress ?? 0}% · {formatSpeed(item.imageDownloadSpeed)}</span>}
+                        {item.status === 'failed' && !isQueueSelecting && (
+                          <button
+                            className="retry-thumb-button"
+                            type="button"
+                            onClick={(event) => { event.stopPropagation(); retryQueueItem(item); }}
+                            aria-label="重试任务"
+                          >
+                            ↻
+                          </button>
+                        )}
+                      </span>
+                    ) : item.status === 'failed' && !isQueueSelecting ? (
+                      <div className="queue-thumb queue-thumb-empty retry-thumb-wrap">
+                        <button
+                          className="retry-thumb-button"
+                          type="button"
+                          onClick={(event) => { event.stopPropagation(); retryQueueItem(item); }}
+                          aria-label="重试任务"
+                        >
+                          ↻
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="queue-thumb queue-thumb-empty">无图</div>
+                    )}
+                    <strong>{item.status}</strong>
+                    <span>{item.createdAt}</span>
+                    <p>{item.prompt}</p>
+                    <small>{formatTaskDurations(item)}</small>
+                    {item.error && <em>{item.error}</em>}
+                    {item.status === 'done' && item.resultImage && !isQueueSelecting && <button className="context-action-button" type="button" onClick={(event) => { event.stopPropagation(); fillReferenceFromQueueItem(item); }}>填入参考图</button>}
+                  </div>
+                );
               })}
               {queue.length === 0 && <div className="compact-empty">暂无队列任务</div>}
             </div>
@@ -687,9 +954,23 @@ function App() {
           <div className="side-stack">
             <div className="panel result-panel">
               <div className="panel-title result-title"><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(-1)}>←</button><h2>生成结果</h2><button disabled={contextResultItems.length < 2} onClick={() => selectAdjacentResult(1)}>→</button><button disabled={!resultImage} onClick={saveResult}>保存图片</button></div>
-              {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · 用时 {formatDuration(selectedQueueItem.elapsedSeconds)} · {selectedQueueItem.prompt}</p>}
+              {selectedQueueItem && <p className="queue-detail">当前查看：{selectedQueueItem.status} · {formatTaskDurations(selectedQueueItem)} · {selectedQueueItem.status === 'downloading' ? `下载 ${selectedQueueItem.imageDownloadProgress ?? 0}% · ${formatSpeed(selectedQueueItem.imageDownloadSpeed)}` : selectedQueueItem.prompt}</p>}
               {selectedQueueItem && <p className="context-detail">上下文结果 {selectedContextResultIndex >= 0 ? selectedContextResultIndex + 1 : 0}/{contextResultItems.length} · 参考图 {selectedQueueItem.referenceImages?.length ?? 0} 张 · {selectedQueueItem.maskImage ? `含 mask · ${selectedQueueItem.maskMode ?? 'alpha'}` : '无 mask'}</p>}
-              {resultImage ? <button className="result-preview-button" onClick={() => setPreviewImage(resultImage)}><img className="result-image" src={resultImage} alt="生成结果" /></button> : <div className="empty-state">生成后的图片会显示在这里</div>}
+              {resultImage ? (
+                <button className="result-preview-button" onClick={() => setPreviewImage(resultImage)}>
+                  <img
+                    className="result-image"
+                    src={resultImage}
+                    alt="生成结果"
+                    onLoad={() => selectedQueueItemId && markResultImageLoaded(selectedQueueItemId)}
+                    onError={() => selectedQueueItemId && markResultImageFailed(selectedQueueItemId)}
+                  />
+                  {resultImageStatus === 'loading' && <span className="result-image-badge">下载中 {selectedQueueItem?.imageDownloadProgress ?? 0}% · {formatSpeed(selectedQueueItem?.imageDownloadSpeed)}</span>}
+                  {resultImageStatus === 'failed' && <span className="result-image-badge error">图片加载失败</span>}
+                </button>
+              ) : (
+                <div className="empty-state">生成后的图片会显示在这里</div>
+              )}
             </div>
             <div className="panel log-panel">
               <div className="panel-title"><h2>调用日志</h2><button onClick={() => setLogs([])} disabled={logs.length === 0}>清空</button></div>

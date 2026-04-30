@@ -22,13 +22,34 @@ export interface GenerateImageRequest {
   maskMode?: MaskMode;
 }
 
+export interface GenerateImageTimings {
+  requestStartedAt: string;
+  responseReceivedMs: number;
+  jsonParsedMs: number;
+  totalMs: number;
+  requestedUrlOutput: boolean;
+  urlOutputFallback: boolean;
+}
+
 export interface GenerateImageResult {
-  imageDataUrl: string;
+  imageSource: string;
+  sourceType: 'dataUrl' | 'url';
   rawResponse: unknown;
+  timings: GenerateImageTimings;
+}
+
+export interface DownloadImageProgress {
+  itemId: string;
+  progress: number;
+  bytesReceived: number;
+  totalBytes?: number;
+  bytesPerSecond: number;
 }
 
 export interface DesktopApi {
   generateImage(request: GenerateImageRequest): Promise<GenerateImageResult>;
+  downloadImage(url: string, itemId: string): Promise<string>;
+  onImageDownloadProgress(callback: (progress: DownloadImageProgress) => void): () => void;
   saveImage(dataUrl: string): Promise<{ canceled: boolean; filePath?: string }>;
 }
 

@@ -314,6 +314,56 @@ textarea {
   background: rgba(2, 6, 23, 0.5);
 }
 
+.queue-thumb-wrap {
+  position: relative;
+  grid-row: 1 / span 5;
+  width: 78px;
+  height: 78px;
+}
+
+.queue-thumb-wrap .queue-thumb {
+  grid-row: auto;
+}
+
+.image-load-badge {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  justify-self: auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #e0f2fe;
+  font-size: 11px;
+  line-height: 1;
+  background: rgba(2, 132, 199, 0.88);
+}
+
+.retry-thumb-wrap {
+  position: relative;
+  grid-row: 1 / span 5;
+}
+
+.retry-thumb-button {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(252, 165, 165, 0.65);
+  border-radius: 999px;
+  color: #fee2e2;
+  font-size: 24px;
+  line-height: 1;
+  background: rgba(127, 29, 29, 0.88);
+  transform: translate(-50%, -50%);
+}
+
+.retry-thumb-button:hover:not(:disabled) {
+  background: rgba(185, 28, 28, 0.92);
+}
+
 .queue-thumb-empty {
   display: grid;
   place-items: center;
@@ -395,8 +445,16 @@ textarea {
   line-height: 1.4;
 }
 
+.queue-item.generating strong {
+  color: #facc15;
+}
+
 .queue-item.done strong {
   color: #86efac;
+}
+
+.queue-item.downloading strong {
+  color: #7dd3fc;
 }
 
 .queue-item.failed strong {
@@ -540,6 +598,7 @@ textarea {
 
 
 .result-preview-button {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -564,6 +623,22 @@ textarea {
   border-radius: 18px;
   object-fit: contain;
   background: rgba(2, 6, 23, 0.45);
+}
+
+.result-image-badge {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  color: #e0f2fe;
+  font-size: 13px;
+  background: rgba(2, 132, 199, 0.88);
+}
+
+.result-image-badge.error {
+  color: #fee2e2;
+  background: rgba(220, 38, 38, 0.9);
 }
 
 .preview-backdrop {
