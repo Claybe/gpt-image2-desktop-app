@@ -1,7 +1,7 @@
 ---
 name: generate-image
-description: Use when the user wants Claude Code to generate images from prompts, create same-resolution placeholders, run image generation in a background subagent named painter, pass image model parameters, choose an output directory or output file path, or use slash commands /generate-image and /setup. If generation is requested before setup, automatically run the /setup flow and guide the user step by step by asking for URL, key, and optional defaults.
-argument-hint: "/setup | <prompt> [--size auto] [--model auto] [--output <dir>|--output-file <path>] [--param key=value]"
+description: Use when the user wants Claude Code to generate images from prompts, create same-resolution placeholders, run image generation in a background subagent named painter, pass image model parameters, choose an output directory or output file path, or use slash commands /gi and /gi-setup. If generation is requested before setup, automatically run the /gi-setup flow and guide the user step by step by asking for URL, key, and optional defaults.
+argument-hint: "/gi-setup | <prompt> [--size auto] [--model auto] [--output <dir>|--output-file <path>] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -16,13 +16,14 @@ argument-hint: "/setup | <prompt> [--size auto] [--model auto] [--output <dir>|-
 
 本技能提供两个入口：
 
-1. `/setup`
+1. `/gi-setup`
    - 初始化 API 配置。
    - 运行后按步骤询问：请输入你的 URL、请输入你的 Key、是否使用默认参数 `auto`。
+   - 用户也可以选择直接使用项目 `setting.json` 中的 URL 和 Key。
    - 用户提供后调用 helper 保存配置。
    - 默认 `model` 为 `auto`。
 
-2. `/generate-image`
+2. `/gi`
    - 根据提示词生成图片。
    - 如果还没有初始化，会自动进入初始化引导，提示用户配置 `url` 和 `apikey`。
    - 参数可以写在 slash 命令后面，也可以写在自然语言提示词里。
@@ -97,21 +98,22 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 简化执行链路：输入 prompt → 生成占位图 → 后台运行 `painter` subagent → 拿到最终结果后报告生成图路径，用最终结果替换占位图。
 
-当用户使用 `/setup` 时：
+当用户使用 `/gi-setup` 时：
 
 1. 不要要求用户一次性写完整命令；按顺序询问并收集：
    1. “请输入你的 URL（API Base URL）”
    2. “请输入你的 Key（API Key）”
    3. “默认参数为 auto，是否需要改成其他 model？”
-2. 如果用户直接在 `/setup` 后提供了 `url`、`apikey` 或 `model`，复用已提供的值，只追问缺失项。
-3. 默认 `model` 使用 `auto`。
-4. 信息齐全后调用：
+2. 如果用户直接在 `/gi-setup` 后提供了 `url`、`apikey` 或 `model`，复用已提供的值，只追问缺失项。
+3. 默认 `model` 为 `auto`。
+4. 如果用户选择直接使用项目 `setting.json` 中的 URL 和 Key，调用 helper 的 `--use-settings`；也可用 `--settings <path>` 指定 setting.json 路径。
+5. 信息齐全后调用：
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model auto
 ```
 
-当用户使用 `/generate-image` 时：
+当用户使用 `/gi` 时：
 
 1. 从命令参数和自然语言中提取：
    - `prompt`
@@ -122,10 +124,11 @@ node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey 
    - `index`（图片路径、提示词和生成结果的字典文件路径）
    - `url` / `apikey` 覆盖值
    - 其他可透传参数，使用 `--param key=value`
-2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动进入 `/setup` 初始化流程，并按步骤引导用户提供：
+2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动进入 `/gi-setup` 初始化流程，并按步骤引导用户提供：
    1. “请输入你的 URL（API Base URL）”
    2. “请输入你的 Key（API Key）”
    3. “默认参数为 auto，是否需要改成其他 model？”
+   4. “也可以直接使用项目 setting.json 里的 URL 和 Key 吗？”如果用户选择是，运行 `node skill/generate-image/scripts/generate-image.mjs setup --use-settings`。
    然后用收集到的信息运行 helper。
 3. 如果用户没有明确尺寸，默认使用 `auto`。
 4. 创建占位图后，不要在主流程里等待图片生成；启动后台 subagent：
@@ -152,7 +155,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | `--model` | 图片模型名称 | `auto` |
 | `--url` | API base URL 覆盖值 | 初始化配置中的值 |
 | `--apikey` / `--api-key` | API Key 覆盖值 | 初始化配置中的值 |
-| `--output` | 输出目录；如果值以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终图片文件路径 | `./generated-images` |
+| `--output` | 输出目录；如果值以 `.png`、`.jpg`、`.jpeg`、`.webp` 结尾，则视为最终图片文件路径 | `./.claybe/.generate-image` |
 | `--output-file` | 最终图片文件路径 | 无 |
 | `--index` | 图片索引字典文件路径，记录图片路径、提示词和生成结果 | `<输出目录>/image-index.json` |
 | `--param key=value` | 透传给生成接口的额外参数，可重复 | 无 |
@@ -162,14 +165,14 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 - 占位图：`placeholder-<timestamp>-<width>x<height>.svg`
 - 生成图：`generated-<timestamp>.png|jpg|webp`，或 `--output-file` / 文件型 `--output` 指定的路径
-- 默认目录：当前工作目录下的 `generated-images/`
+- 默认目录：项目目录下的 `.claybe/.generate-image/`
 - 索引字典：默认 `<输出目录>/image-index.json`，键为生成图片路径，值包含 `prompt`、`placeholderPath`、`generatedPath`、`result`、`model`、`size`、`params` 和时间戳
 
 ### 失败提示
 
 常见失败与处理：
 
-- 未初始化：自动进入 `/setup` 初始化引导，按步骤询问 URL、Key，并使用默认参数 `auto`。
+- 未初始化：自动进入 `/gi-setup` 初始化引导，按步骤询问 URL、Key，并使用默认参数 `auto`。
 - API Key 缺失：补充 `--apikey` 或重新初始化。
 - 接口返回非 2xx：显示 `图片生成失败：...`。
 - 响应没有图片：显示 `响应中没有 b64_json 或 url`。
@@ -191,14 +194,14 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 This skill exposes two entries:
 
-1. `/setup`
+1. `/gi-setup`
    - Sets up API settings.
    - Requires `url` and `apikey`.
    - Optionally sets the default `model`.
 
-2. `/generate-image`
+2. `/gi`
    - Generates an image from a prompt.
-   - If the skill is not set up yet, automatically enters the `/setup` flow and asks for URL, key, and whether to keep the default `auto` parameter step by step.
+   - If the skill is not set up yet, automatically enters the `/gi-setup` flow and asks for URL, key, and whether to keep the default `auto` parameter step by step.
    - Parameters can be passed after the slash command or described in natural language.
    - Creates a same-resolution placeholder before the API call.
    - Runs image generation in a background subagent named `painter`.
@@ -269,21 +272,27 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 Simplified flow: input prompt → create placeholder → run background `painter` subagent → report the final image path so it can replace the placeholder.
 
-For `/setup`:
+For `/gi-setup`:
 
 1. Do not require the user to write the full command up front; ask for values in order:
    1. “Please enter your URL (API Base URL).”
    2. “Please enter your Key (API Key).”
    3. “The default parameter is auto. Do you want to use another model?”
-2. If the user already provided `url`, `apikey`, or `model` after `/setup`, reuse provided values and only ask for missing ones.
+2. If the user already provided `url`, `apikey`, or `model` after `/gi-setup`, reuse provided values and only ask for missing ones.
 3. Default `model` to `auto`.
-4. Once all required values are available, run:
+4. If the user chooses to use the project `setting.json`, run:
+
+```bash
+node skill/generate-image/scripts/generate-image.mjs setup --use-settings
+```
+
+5. Once all required values are available, run:
 
 ```bash
 node skill/generate-image/scripts/generate-image.mjs setup --url <url> --apikey <apikey> --model auto
 ```
 
-For `/generate-image`:
+For `/gi`:
 
 1. Extract:
    - `prompt`
@@ -294,10 +303,11 @@ For `/generate-image`:
    - `index`（图片路径、提示词和生成结果的字典文件路径）
    - `url` / `apikey` overrides
    - passthrough parameters as `--param key=value`
-2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; automatically enter the `/setup` flow and guide the user step by step to provide:
+2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; automatically enter the `/gi-setup` flow and guide the user step by step to provide:
    1. “Please enter your URL (API Base URL).”
    2. “Please enter your Key (API Key).”
    3. “The default parameter is auto. Do you want to use another model?”
+   4. “Do you want to use URL and Key from the project setting.json?” If yes, run `node skill/generate-image/scripts/generate-image.mjs setup --use-settings`.
    Then run the helper with the collected values.
 3. Default to `auto` when size is not specified.
 4. After creating the placeholder, do not wait for image generation in the main flow; launch a background subagent:
@@ -324,7 +334,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 | `--model` | Image model name | `auto` |
 | `--url` | API base URL override | Config value |
 | `--apikey` / `--api-key` | API key override | Config value |
-| `--output` | Output directory; if the value ends with `.png`, `.jpg`, `.jpeg`, or `.webp`, it is treated as the final image file path | `./generated-images` |
+| `--output` | Output directory; if the value ends with `.png`, `.jpg`, `.jpeg`, or `.webp`, it is treated as the final image file path | `./.claybe/.generate-image` |
 | `--output-file` | Final image file path | None |
 | `--index` | Image index dictionary file path; records image paths, prompts, and generation results | `<output directory>/image-index.json` |
 | `--param key=value` | Extra API parameter; repeatable | None |
@@ -334,15 +344,15 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 - Placeholder: `placeholder-<timestamp>-<width>x<height>.svg`
 - Generated image: `generated-<timestamp>.png|jpg|webp`, or the path specified by `--output-file` / file-style `--output`
-- Default directory: `generated-images/` under the current working directory.
+- Default directory: `.claybe/.generate-image/` under the project directory.
 - Index dictionary: defaults to `<output directory>/image-index.json`; keys are generated image paths, values include `prompt`, `placeholderPath`, `generatedPath`, `result`, `model`, `size`, `params`, and timestamps.
 
 ### Failure handling
 
 Common failures:
 
-- Not set up: automatically enter `/setup` and ask for URL, key, and whether to keep the default `auto` parameter step by step.
-- Missing API key: pass `--apikey` or run `/setup` again.
+- Not set up: automatically enter `/gi-setup` and ask for URL, key, and whether to keep the default `auto` parameter step by step.
+- Missing API key: pass `--apikey` or run `/gi-setup` again.
 - Non-2xx API response: the helper prints `图片生成失败：...`.
 - Response has no image: the helper reports missing `b64_json` or `url`.
 - URL download failure: the helper prints the HTTP status.

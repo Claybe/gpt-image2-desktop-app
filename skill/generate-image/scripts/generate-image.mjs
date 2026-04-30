@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONFIG_PATH = path.join(os.homedir(), '.claude', 'generate-image', 'config.json');
-const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), 'generated-images');
+const DEFAULT_OUTPUT_DIR = path.join(process.cwd(), '.claybe', '.generate-image');
+const DEFAULT_SETTINGS_PATH = path.join(process.cwd(), 'setting.json');
 const SIZE_RE = /^(\d+)x(\d+)$/;
 
 function usage() {
@@ -14,10 +15,12 @@ function usage() {
 
 Commands:
   setup --url <api-base-url> --apikey <api-key> [--model <model>] [--config <path>]
+  setup --use-settings [--settings <path>] [--model <model>] [--config <path>]
   generate --prompt <text> [--size 1024x1024|1024x1536|1536x1024|auto] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--output-file <path>] [--index <path>] [--param key=value]
 
 Examples:
   node scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-...
+  node scripts/generate-image.mjs setup --use-settings
   node scripts/generate-image.mjs generate --prompt "a glass dragon" --size 1024x1536 --param quality=high
 `;
 }
@@ -112,6 +115,33 @@ async function readConfig(configPath) {
   }
 }
 
+async function readSettings(settingsPath) {
+  try {
+    return JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') return {};
+    throw error;
+  }
+}
+
+function pickSettingValue(settings, keys) {
+  for (const key of keys) {
+    if (settings?.[key]) return settings[key];
+    if (settings?.generateImage?.[key]) return settings.generateImage[key];
+    if (settings?.['generate-image']?.[key]) return settings['generate-image'][key];
+  }
+  return undefined;
+}
+
+async function readSettingsConfig(settingsPath) {
+  const settings = await readSettings(settingsPath);
+  return {
+    apiBaseUrl: pickSettingValue(settings, ['apiBaseUrl', 'url', 'baseUrl']),
+    apiKey: pickSettingValue(settings, ['apiKey', 'apikey', 'api-key']),
+    model: pickSettingValue(settings, ['model'])
+  };
+}
+
 async function writeConfig(configPath, config) {
   await fs.mkdir(path.dirname(configPath), { recursive: true, mode: 0o700 });
   await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
@@ -200,14 +230,17 @@ async function saveGeneratedImage(outputDir, image, placeholderPath, outputFileP
 
 async function setup(args) {
   const configPath = args.config || DEFAULT_CONFIG_PATH;
+  const settingsPath = args.settings || args['settings-path'] || DEFAULT_SETTINGS_PATH;
+  const useSettings = args.settings === true || args['use-settings'] === true;
+  const settingsConfig = useSettings || args.settings || args['settings-path'] ? await readSettingsConfig(settingsPath) : {};
   const nextConfig = {
-    apiBaseUrl: normalizeBaseUrl(args.url),
-    apiKey: args.apikey || args['api-key'],
-    model: args.model || 'auto'
+    apiBaseUrl: normalizeBaseUrl(args.url || settingsConfig.apiBaseUrl),
+    apiKey: args.apikey || args['api-key'] || settingsConfig.apiKey,
+    model: args.model || settingsConfig.model || 'auto'
   };
 
   if (!nextConfig.apiKey) {
-    throw new Error('缺少 API Key：请传入 --apikey');
+    throw new Error('缺少 API Key：请传入 --apikey，或使用 --use-settings 从 setting.json 读取');
   }
 
   await writeConfig(configPath, nextConfig);
@@ -267,7 +300,7 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
 }
 
 function buildInitializationGuide(configPath, missingFields) {
-  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 默认参数为 auto；如需覆盖可传入 model=<模型名>\n4. 运行：\n  /setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model auto\n\n配置将保存到：${configPath}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
+  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /gi-setup 初始化流程。请按以下步骤配置：\n1. 请输入你的 URL（API Base URL），例如：https://api.example.com/v1\n2. 请输入你的 Key（API Key），格式通常类似 sk-...\n3. 也可以选择直接使用项目 setting.json 里的 URL 和 Key：/gi-setup --use-settings\n4. 默认参数为 auto；如需覆盖可传入 model=<模型名>\n5. 运行：\n  /gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs setup --url <你的 API Base URL> --apikey <你的 API Key> --model auto\n  node skill/generate-image/scripts/generate-image.mjs setup --use-settings\n\n配置将保存到：${configPath}\n临时文件默认保存在：${DEFAULT_OUTPUT_DIR}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
 }
 
 function assertConfigured(configPath, apiBaseUrl, apiKey) {

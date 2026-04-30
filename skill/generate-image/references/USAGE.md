@@ -4,12 +4,12 @@
 
 ### 简介
 
-`generate-image` 是一个 Claude Code skill，用于通过兼容 OpenAI Images API 的接口生成图片。它支持通过 `/setup` 分步初始化 URL/API Key，支持提示词、参数和输出位置输入。生成流程简化为：输入 prompt → 生成同分辨率占位图 → 后台运行名为 `painter` 的 subagent → 拿到最终结果后替换占位图。
+`generate-image` 是一个 Claude Code skill，用于通过兼容 OpenAI Images API 的接口生成图片。它支持通过 `/gi-setup` 分步初始化 URL/API Key，或直接使用项目 `setting.json` 里的 URL 和 Key；支持提示词、参数和输出位置输入。生成流程简化为：输入 prompt → 生成同分辨率占位图 → 后台运行名为 `painter` 的 subagent → 拿到最终结果后替换占位图。
 
 ### 命令
 
-- `/setup`：分步设置 API URL、API Key，默认参数为 `auto`。
-- `/generate-image`：输入提示词和参数，生成图片。
+- `/gi-setup`：分步设置 API URL、API Key，默认参数为 `auto`；也可选择直接读取项目 `setting.json`。
+- `/gi`：输入提示词和参数，生成图片。
 
 ### npx skills 安装
 
@@ -30,7 +30,7 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 ### setup 示例
 
 ```text
-/setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
+/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
 ```
 
 内部执行：
@@ -39,16 +39,38 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
 ```
 
+### gi-setup 使用 setting.json
+
+如果项目根目录有 `setting.json`，并包含 `apiBaseUrl` / `apiKey`（也支持 `url` / `apikey`），可以直接选择使用：
+
+```text
+/gi-setup --use-settings
+```
+
+内部执行：
+
+```bash
+node skill/generate-image/scripts/generate-image.mjs setup --use-settings
+```
+
+也可以指定路径：
+
+```bash
+node skill/generate-image/scripts/generate-image.mjs setup --use-settings --settings ./setting.json
+```
+
 ### 未初始化时的引导
 
-如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动进入 `/setup` 初始化流程，并一步一步引导你提供：
+如果直接使用 `/gi`，但尚未配置 URL 或 API Key，skill 会自动进入 `/gi-setup` 初始化流程，并一步一步引导你提供：
 
 1. 请输入你的 URL（API Base URL）
 2. 请输入你的 Key（API Key）
 3. 默认参数为 `auto`，如需覆盖可提供其他 model
+4. 也可以选择直接使用项目 `setting.json` 里的 URL 和 Key
 
 ```text
-/setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto
+/gi-setup url=<你的 API Base URL> apikey=<你的 API Key> model=auto
+/gi-setup --use-settings
 ```
 
 不会只返回一个模糊失败错误。
@@ -56,7 +78,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url https://api.exa
 ### 生成示例
 
 ```text
-/generate-image 一张赛博朋克风格的上海夜景，尺寸 1536x1024，quality=high output-file=./generated-images/shanghai.png
+/gi 一张赛博朋克风格的上海夜景，尺寸 1536x1024，quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 内部执行示例：
@@ -65,7 +87,7 @@ node skill/generate-image/scripts/generate-image.mjs setup --url https://api.exa
 node skill/generate-image/scripts/generate-image.mjs generate \
   --prompt "一张赛博朋克风格的上海夜景" \
   --size 1536x1024 \
-  --output-file ./generated-images/shanghai.png \
+  --output-file ./.claybe/.generate-image/shanghai.png \
   --param quality=high
 ```
 
@@ -85,7 +107,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### 输出
 
-默认输出目录是当前目录下的 `generated-images/`。也可以使用 `output-file` 指定最终图片文件路径，或把带图片扩展名的路径传给 `output`。每次生成会维护一个索引字典文件，默认路径为 `<输出目录>/image-index.json`，用于按图片路径查询对应提示词和生成结果。
+默认输出目录是项目目录下的 `.claybe/.generate-image/`。也可以使用 `output-file` 指定最终图片文件路径，或把带图片扩展名的路径传给 `output`。每次生成会维护一个索引字典文件，默认路径为 `<输出目录>/image-index.json`，用于按图片路径查询对应提示词和生成结果。
 
 每次生成包含：
 
@@ -109,12 +131,12 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Introduction
 
-`generate-image` is a Claude Code skill for generating images through an OpenAI Images API-compatible endpoint. It supports step-by-step URL/API key setup through `/setup`, prompt, parameter, and output-location input. The generation flow is simplified to: input prompt → create a same-resolution placeholder → run a background subagent named `painter` → replace the placeholder with the final result.
+`generate-image` is a Claude Code skill for generating images through an OpenAI Images API-compatible endpoint. It supports step-by-step URL/API key setup through `/gi-setup`, or directly using URL and Key from the project `setting.json`; prompt, parameter, and output-location input. The generation flow is simplified to: input prompt → create a same-resolution placeholder → run a background subagent named `painter` → replace the placeholder with the final result.
 
 ### Commands
 
-- `/setup`: configure API URL and API key step by step; the default parameter is `auto`.
-- `/generate-image`: generate an image from a prompt and parameters.
+- `/gi-setup`: configure API URL and API key step by step; the default parameter is `auto`; can also read the project `setting.json`.
+- `/gi`: generate an image from a prompt and parameters.
 
 ### Install with npx skills
 
@@ -135,7 +157,7 @@ Restart Claude Code or open a new session after installation.
 ### Setup example
 
 ```text
-/setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
+/gi-setup url=https://api.example.com/v1 apikey=sk-xxx model=auto
 ```
 
 Internal command:
@@ -144,16 +166,38 @@ Internal command:
 node skill/generate-image/scripts/generate-image.mjs setup --url https://api.example.com/v1 --apikey sk-xxx --model auto
 ```
 
+### Use setting.json with gi-setup
+
+If the project root has `setting.json` with `apiBaseUrl` / `apiKey` (also supports `url` / `apikey`), choose direct setup:
+
+```text
+/gi-setup --use-settings
+```
+
+Internal command:
+
+```bash
+node skill/generate-image/scripts/generate-image.mjs setup --use-settings
+```
+
+You can also specify the settings path:
+
+```bash
+node skill/generate-image/scripts/generate-image.mjs setup --use-settings --settings ./setting.json
+```
+
 ### Setup guidance when not set up
 
-If `/generate-image` is used before URL or API key configuration exists, the skill automatically enters the `/setup` setup flow and guides the user step by step to provide:
+If `/gi` is used before URL or API key configuration exists, the skill automatically enters the `/gi-setup` setup flow and guides the user step by step to provide:
 
 1. Please enter your URL (API Base URL)
 2. Please enter your Key (API Key)
 3. The default parameter is `auto`; provide another model only if needed
+4. Or choose to use URL and Key directly from the project `setting.json`
 
 ```text
-/setup url=<your API Base URL> apikey=<your API Key> model=auto
+/gi-setup url=<your API Base URL> apikey=<your API Key> model=auto
+/gi-setup --use-settings
 ```
 
 It does not only return a vague failure.
@@ -161,7 +205,7 @@ It does not only return a vague failure.
 ### Generate example
 
 ```text
-/generate-image a cyberpunk night view of Shanghai, size 1536x1024, quality=high output-file=./generated-images/shanghai.png
+/gi a cyberpunk night view of Shanghai, size 1536x1024, quality=high output-file=./.claybe/.generate-image/shanghai.png
 ```
 
 Internal command example:
@@ -170,7 +214,7 @@ Internal command example:
 node skill/generate-image/scripts/generate-image.mjs generate \
   --prompt "a cyberpunk night view of Shanghai" \
   --size 1536x1024 \
-  --output-file ./generated-images/shanghai.png \
+  --output-file ./.claybe/.generate-image/shanghai.png \
   --param quality=high
 ```
 
@@ -190,7 +234,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Output
 
-The default output directory is `generated-images/` under the current directory. You can also use `output-file` for the final image file path, or pass an image-extension path to `output`. Each generation maintains an index dictionary file, defaulting to `<output directory>/image-index.json`, for looking up prompts and generation results by image path.
+The default output directory is `.claybe/.generate-image/` under the project directory. You can also use `output-file` for the final image file path, or pass an image-extension path to `output`. Each generation maintains an index dictionary file, defaulting to `<output directory>/image-index.json`, for looking up prompts and generation results by image path.
 
 Each generation includes:
 
