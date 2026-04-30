@@ -8,7 +8,7 @@
 
 ### 命令
 
-- `/generate-image:initialize`：设置 API URL、API Key、默认模型。
+- `/generate-image:steup`：设置 API URL、API Key、默认模型。
 - `/generate-image`：输入提示词和参数，生成图片。
 
 ### npx skills 安装
@@ -30,21 +30,25 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 ### 初始化示例
 
 ```text
-/generate-image:initialize url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
+/generate-image:steup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
 ```
 
 内部执行：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
+node skill/generate-image/scripts/generate-image.mjs steup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
 ```
 
 ### 未初始化时的引导
 
-如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动提示你先运行初始化：
+如果直接使用 `/generate-image`，但尚未配置 URL 或 API Key，skill 会自动进入 `/generate-image:steup` 初始化流程，并一步一步引导你提供：
+
+1. API Base URL
+2. API Key
+3. 可选默认模型（默认 `gpt-image-2`）
 
 ```text
-/generate-image:initialize url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2
+/generate-image:steup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2
 ```
 
 不会只返回一个模糊失败错误。
@@ -105,7 +109,7 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Commands
 
-- `/generate-image:initialize`: configure API URL, API key, and default model.
+- `/generate-image:steup`: configure API URL, API key, and default model.
 - `/generate-image`: generate an image from a prompt and parameters.
 
 ### Install with npx skills
@@ -124,24 +128,28 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 
 Restart Claude Code or open a new session after installation.
 
-### Initialize example
+### Setup example
 
 ```text
-/generate-image:initialize url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
+/generate-image:steup url=https://api.example.com/v1 apikey=sk-xxx model=gpt-image-2
 ```
 
 Internal command:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
+node skill/generate-image/scripts/generate-image.mjs steup --url https://api.example.com/v1 --apikey sk-xxx --model gpt-image-2
 ```
 
-### Setup guidance when uninitialized
+### Setup guidance when not set up
 
-If `/generate-image` is used before URL or API key configuration exists, the skill automatically asks the user to initialize first:
+If `/generate-image` is used before URL or API key configuration exists, the skill automatically enters the `/generate-image:steup` setup flow and guides the user step by step to provide:
+
+1. API Base URL
+2. API Key
+3. Optional default model (defaults to `gpt-image-2`)
 
 ```text
-/generate-image:initialize url=<your API Base URL> apikey=<your API Key> model=gpt-image-2
+/generate-image:steup url=<your API Base URL> apikey=<your API Key> model=gpt-image-2
 ```
 
 It does not only return a vague failure.
@@ -168,8 +176,8 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 | prompt | Yes | Image prompt |
 | size | No | `1024x1024`, `1024x1536`, `1536x1024`, or `auto` |
 | model | No | Defaults to `gpt-image-2` |
-| url | No | Overrides initialized URL |
-| apikey | No | Overrides initialized API key |
+| url | No | Overrides configured URL |
+| apikey | No | Overrides configured API key |
 | output | No | Output directory |
 | param | No | Passthrough parameter in `key=value` format |
 

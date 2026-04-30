@@ -1,7 +1,7 @@
 ---
 name: generate-image
-description: Use when the user wants Claude Code to initialize an image generation API, generate images from prompts, pass image model parameters, create same-resolution placeholders before generation, or use slash commands /generate-image and /generate-image:initialize.
-argument-hint: "initialize --url <url> --apikey <key> | <prompt> [--size 1024x1024] [--model gpt-image-2] [--param key=value]"
+description: Use when the user wants Claude Code to set up an image generation API with /generate-image:steup, generate images from prompts, pass image model parameters, create same-resolution placeholders before generation, or use slash commands /generate-image and /generate-image:steup. If generation is requested before setup, automatically run the steup flow and guide the user step by step.
+argument-hint: "steup --url <url> --apikey <key> | <prompt> [--size 1024x1024] [--model gpt-image-2] [--param key=value]"
 ---
 
 # Generate Image Skill
@@ -16,7 +16,7 @@ argument-hint: "initialize --url <url> --apikey <key> | <prompt> [--size 1024x10
 
 本技能提供两个入口：
 
-1. `/generate-image:initialize`
+1. `/generate-image:steup`
    - 初始化 API 配置。
    - 必须设置 `url` 和 `apikey`。
    - 可选设置默认 `model`。
@@ -49,7 +49,7 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 使用 helper 脚本保存配置：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize \
+node skill/generate-image/scripts/generate-image.mjs steup \
   --url https://api.example.com/v1 \
   --apikey sk-your-key \
   --model gpt-image-2
@@ -92,14 +92,14 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Agent 执行规则
 
-当用户使用 `/generate-image:initialize` 时：
+当用户使用 `/generate-image:steup` 时：
 
 1. 从用户输入提取 `url`、`apikey`、可选 `model`。
 2. 如果缺少 `url` 或 `apikey`，提示用户补齐。
 3. 调用：
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize --url <url> --apikey <apikey> --model <model>
+node skill/generate-image/scripts/generate-image.mjs steup --url <url> --apikey <apikey> --model <model>
 ```
 
 当用户使用 `/generate-image` 时：
@@ -111,7 +111,11 @@ node skill/generate-image/scripts/generate-image.mjs initialize --url <url> --ap
    - `output`
    - `url` / `apikey` 覆盖值
    - 其他可透传参数，使用 `--param key=value`
-2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动引导用户运行 `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`。
+2. 如果配置文件不存在，或配置里缺少 `url` / `apikey`，不要只报错；自动进入 `/generate-image:steup` 初始化流程，并按步骤引导用户提供：
+   1. API Base URL
+   2. API Key
+   3. 可选默认模型（默认 `gpt-image-2`）
+   然后提示运行 `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`。
 3. 如果用户没有明确尺寸，默认使用 `1024x1024`。
 4. 调用 helper 脚本前，告诉用户将先生成同尺寸占位图。
 5. 调用：
@@ -146,7 +150,7 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 常见失败与处理：
 
-- 未初始化：自动进入初始化引导，提示运行 `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`。
+- 未初始化：自动进入初始化引导，提示运行 `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`。
 - API Key 缺失：补充 `--apikey` 或重新初始化。
 - 接口返回非 2xx：显示 `图片生成失败：...`。
 - 响应没有图片：显示 `响应中没有 b64_json 或 url`。
@@ -168,14 +172,14 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 This skill exposes two entries:
 
-1. `/generate-image:initialize`
-   - Initializes API settings.
+1. `/generate-image:steup`
+   - Sets up API settings.
    - Requires `url` and `apikey`.
    - Optionally sets the default `model`.
 
 2. `/generate-image`
    - Generates an image from a prompt.
-   - If the skill is not initialized yet, automatically enters setup guidance and asks the user to provide `url` and `apikey`.
+   - If the skill is not set up yet, automatically enters the `/generate-image:steup` setup flow and asks the user to provide `url` and `apikey` step by step.
    - Parameters can be passed after the slash command or described in natural language.
    - Creates a same-resolution placeholder before the API call.
    - On failure, reports the error and keeps the placeholder path.
@@ -196,10 +200,10 @@ npx --yes skills add Claybe/gpt-image2-desktop-app --skill generate-image --agen
 
 Restart Claude Code or open a new session after installation so the skill list is reloaded.
 
-### Initialize
+### setup
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize \
+node skill/generate-image/scripts/generate-image.mjs steup \
   --url https://api.example.com/v1 \
   --apikey sk-your-key \
   --model gpt-image-2
@@ -242,14 +246,14 @@ node skill/generate-image/scripts/generate-image.mjs generate \
 
 ### Agent instructions
 
-For `/generate-image:initialize`:
+For `/generate-image:steup`:
 
 1. Extract `url`, `apikey`, and optional `model` from the user's request.
 2. If `url` or `apikey` is missing, ask the user to provide it.
 3. Run:
 
 ```bash
-node skill/generate-image/scripts/generate-image.mjs initialize --url <url> --apikey <apikey> --model <model>
+node skill/generate-image/scripts/generate-image.mjs steup --url <url> --apikey <apikey> --model <model>
 ```
 
 For `/generate-image`:
@@ -261,7 +265,11 @@ For `/generate-image`:
    - `output`
    - `url` / `apikey` overrides
    - passthrough parameters as `--param key=value`
-2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; guide the user to run `/generate-image:initialize url=<...> apikey=<...> model=gpt-image-2`.
+2. If the config file does not exist, or if `url` / `apikey` is missing, do not only fail; automatically enter the `/generate-image:steup` setup flow and guide the user step by step to provide:
+   1. API Base URL
+   2. API Key
+   3. Optional default model (defaults to `gpt-image-2`)
+   Then ask the user to run `/generate-image:steup url=<...> apikey=<...> model=gpt-image-2`.
 3. Default to `1024x1024` when size is not specified.
 4. Tell the user that a same-resolution placeholder will be created first.
 5. Run:
@@ -296,8 +304,8 @@ node skill/generate-image/scripts/generate-image.mjs generate --prompt "<prompt>
 
 Common failures:
 
-- Not initialized: run `/generate-image:initialize` first.
-- Missing API key: pass `--apikey` or initialize again.
+- Not set up: automatically enter `/generate-image:steup` and guide the user step by step.
+- Missing API key: pass `--apikey` or run `/generate-image:steup` again.
 - Non-2xx API response: the helper prints `图片生成失败：...`.
 - Response has no image: the helper reports missing `b64_json` or `url`.
 - URL download failure: the helper prints the HTTP status.

@@ -13,11 +13,11 @@ function usage() {
   return `generate-image helper
 
 Commands:
-  initialize --url <api-base-url> --apikey <api-key> [--model <model>] [--config <path>]
+  steup --url <api-base-url> --apikey <api-key> [--model <model>] [--config <path>]
   generate --prompt <text> [--size 1024x1024|1024x1536|1536x1024|auto] [--model <model>] [--url <api-base-url>] [--apikey <api-key>] [--output <dir>] [--param key=value]
 
 Examples:
-  node scripts/generate-image.mjs initialize --url https://api.example.com/v1 --apikey sk-...
+  node scripts/generate-image.mjs steup --url https://api.example.com/v1 --apikey sk-...
   node scripts/generate-image.mjs generate --prompt "a glass dragon" --size 1024x1536 --param quality=high
 `;
 }
@@ -71,7 +71,7 @@ function coerceValue(value) {
 
 function normalizeBaseUrl(url) {
   if (!url || typeof url !== 'string') {
-    throw new Error('缺少 URL：请先运行 initialize，或在 generate 中传入 --url');
+    throw new Error('缺少 URL：请先运行 steup，或在 generate 中传入 --url');
   }
   return url.replace(/\/$/, '');
 }
@@ -164,7 +164,7 @@ async function saveGeneratedImage(outputDir, image, placeholderPath) {
   return filePath;
 }
 
-async function initialize(args) {
+async function steup(args) {
   const configPath = args.config || DEFAULT_CONFIG_PATH;
   const nextConfig = {
     apiBaseUrl: normalizeBaseUrl(args.url),
@@ -177,7 +177,7 @@ async function initialize(args) {
   }
 
   await writeConfig(configPath, nextConfig);
-  console.log(`generate-image 初始化完成：${configPath}`);
+  console.log(`generate-image steup 配置完成：${configPath}`);
   console.log('已保存 url、apikey 和默认 model。API Key 文件权限已设置为 600。');
 }
 
@@ -227,7 +227,7 @@ function extractNaturalLanguageOptions(rawPrompt, explicitParams) {
 }
 
 function buildInitializationGuide(configPath, missingFields) {
-  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n请先运行初始化命令：\n  /generate-image:initialize url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs initialize --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image-2\n\n配置将保存到：${configPath}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
+  return `generate-image 尚未完成初始化，缺少：${missingFields.join('、')}\n\n已自动进入 /generate-image:steup 初始化流程。请按以下步骤配置：\n1. 准备 API Base URL，例如：https://api.example.com/v1\n2. 准备 API Key，格式通常类似 sk-...\n3. 可选填写默认模型；不填时使用 gpt-image-2\n4. 运行：\n  /generate-image:steup url=<你的 API Base URL> apikey=<你的 API Key> model=gpt-image-2\n\n或直接运行 helper：\n  node skill/generate-image/scripts/generate-image.mjs steup --url <你的 API Base URL> --apikey <你的 API Key> --model gpt-image-2\n\n配置将保存到：${configPath}\n安全提醒：不要把 API Key 提交到 git、issue、PR 或聊天摘要。`;
 }
 
 function assertConfigured(configPath, apiBaseUrl, apiKey) {
@@ -308,8 +308,8 @@ async function main() {
     return;
   }
 
-  if (args.command === 'initialize') {
-    await initialize(args);
+  if (args.command === 'steup') {
+    await steup(args);
     return;
   }
 

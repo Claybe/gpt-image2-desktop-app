@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "/generate-image:initialize url=https://api.example.com/v1 apikey=sk-test model=gpt-image-2",
-      "expected_output": "Agent extracts url/apikey/model and initializes the config without exposing the key in summaries.",
+      "prompt": "/generate-image:steup url=https://api.example.com/v1 apikey=sk-test model=gpt-image-2",
+      "expected_output": "Agent extracts url/apikey/model through /generate-image:steup and sets up the config without exposing the key in summaries.",
       "files": []
     },
     {
@@ -17,6 +17,12 @@
       "id": 3,
       "prompt": "/generate-image --prompt \"minimal product photo of a glass cup\" --size 1024x1536 --model gpt-image-2 --param background=transparent",
       "expected_output": "Agent preserves explicit CLI-style parameters and reports generated image path or clear failure.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "/generate-image a watercolor dragon, size 1024x1024",
+      "expected_output": "When no URL or API key is configured, Agent automatically enters the /generate-image:steup setup flow and guides the user step by step for API Base URL, API Key, and optional model instead of returning a vague failure.",
       "files": []
     }
   ]
