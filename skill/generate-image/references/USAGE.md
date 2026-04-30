@@ -242,10 +242,10 @@ Example:
 
 ### Output and errors
 
-- Placeholder: `placeholder-<timestamp>-<width>x<height>.svg`
-- Generated image: `generated-<timestamp>.png|jpg|webp`, or the path specified by `output-file` / file-style `output`
+- PNG placeholder: first written to the final image path
+- Generated image: on success, the real image overwrites that same path from `generated-<timestamp>.png` or the path specified by `output-file` / file-style `output`
 - Index dictionary: defaults to `<output directory>/image-index.json`
 
-The index maps image paths to prompts and generation results. On failure, the error is recorded and the placeholder remains available for UI or follow-up workflows.
+The index maps image paths to prompts and generation results. On success, `placeholderPath` and `generatedPath` are the same path. On failure, the error is recorded and the PNG placeholder remains at that same path for UI or follow-up workflows.
 
 Common errors include missing API key, missing URL, HTTP errors from the API, no image data in the response, and failed downloads from returned image URLs.
